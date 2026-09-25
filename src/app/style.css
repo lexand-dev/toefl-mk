@@ -12,3 +12,7 @@ button:disabled { opacity: .6; cursor: wait; }
 :focus-visible { outline: 3px solid #c56a11; outline-offset: 2px; }
 .error { color: #a52120; } .success { color: #216042; }
 nav { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0; }
+.editorial-form { display: grid; gap: 1rem; }
+.editorial-form textarea, .editorial-form select { font: inherit; padding: .65rem; border: 1px solid #6d7e8d; border-radius: .25rem; }
+.editorial-form textarea { width: 100%; box-sizing: border-box; }
+.editorial-form label:has([type="checkbox"]) { display: flex; align-items: start; }
