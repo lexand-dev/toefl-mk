@@ -66,14 +66,15 @@ export function validatePublication(type: TypeCode, input: RevisionInput) {
     }
     const answers = item.key?.acceptedAnswers;
     if (answers) {
-      if (!answers.every((answer) => typeof answer === "string" && answer.trim().length > 0)) errors.push(`Clave ${item.ordinal} inválida`);
+      if (type !== "W1" && !answers.every((answer) => typeof answer === "string" && answer.trim().length > 0)) errors.push(`Clave ${item.ordinal} inválida`);
       if ((type === "R3" || type === "L2") && choice.safeParse(item.publicPrompt).success) {
         const options = choice.parse(item.publicPrompt).options;
         if (answers.length !== 1 || !answers.every((answer) => options.some((option) => option.id === answer))) errors.push(`Clave ${item.ordinal} debe identificar una sola opción`);
       }
       if (type === "W1" && promptSchemas.W1.safeParse(item.publicPrompt).success) {
         const tokens = promptSchemas.W1.parse(item.publicPrompt).tokens;
-        if (answers.length !== tokens.length || new Set(answers).size !== tokens.length || !answers.every((answer) => tokens.some((token) => token.id === answer))) errors.push(`Clave ${item.ordinal} no es una secuencia completa de fichas`);
+        const sequences = answers.every((answer) => typeof answer === "string") ? [answers] : answers;
+        if (!sequences.length || !sequences.every((sequence) => Array.isArray(sequence) && sequence.length === tokens.length && new Set(sequence).size === tokens.length && sequence.every((id) => typeof id === "string" && tokens.some((token) => token.id === id)))) errors.push(`Clave ${item.ordinal} no es una secuencia completa de fichas`);
       }
     }
   }
