@@ -156,3 +156,68 @@ export const reviewMaterials = pgTable("review_materials", {
   revisionId: uuid("revision_id").primaryKey().references(() => exerciseRevisions.id, { onDelete: "restrict" }),
   reviewContent: jsonb("review_content").notNull(),
 }, (t) => [check("review_content_object", sql`jsonb_typeof(${t.reviewContent}) = 'object'`)]);
+
+export const attempts = pgTable("attempts", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  typeCode: text("type_code").notNull(),
+  requestedGroups: integer("requested_groups").notNull(),
+  timerMode: text("timer_mode").notNull(),
+  rulesSnapshot: jsonb("rules_snapshot").notNull(),
+  status: text("status").notNull().default("prepared"),
+  currentPosition: integer("current_position").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  pointsAwarded: numeric("points_awarded", { precision: 10, scale: 2 }),
+  pointsPossible: numeric("points_possible", { precision: 10, scale: 2 }),
+}, (t) => [
+  check("attempt_type_check", sql`${t.typeCode} IN ('R1', 'R3', 'L2', 'W1', 'W2')`),
+  check("attempt_groups_positive", sql`${t.requestedGroups} > 0`),
+  check("attempt_timer_check", sql`${t.timerMode} IN ('count_up', 'count_down')`),
+  check("attempt_rules_object", sql`jsonb_typeof(${t.rulesSnapshot}) = 'object'`),
+  check("attempt_status_check", sql`${t.status} IN ('prepared', 'in_progress', 'submitted')`),
+  check("attempt_position_positive", sql`${t.currentPosition} > 0`),
+  check("attempt_lifecycle", sql`(${t.status} = 'prepared' AND ${t.startedAt} IS NULL AND ${t.submittedAt} IS NULL) OR (${t.status} = 'in_progress' AND ${t.startedAt} IS NOT NULL AND ${t.submittedAt} IS NULL) OR (${t.status} = 'submitted' AND ${t.startedAt} IS NOT NULL AND ${t.submittedAt} IS NOT NULL)`),
+  check("attempt_totals", sql`(${t.pointsAwarded} IS NULL AND ${t.pointsPossible} IS NULL) OR (${t.pointsAwarded} IS NOT NULL AND ${t.pointsPossible} IS NOT NULL AND ${t.pointsAwarded} >= 0 AND ${t.pointsPossible} > 0 AND ${t.pointsAwarded} <= ${t.pointsPossible})`),
+  index("attempt_history_idx").on(t.userId, t.createdAt),
+]);
+
+export const attemptGroups = pgTable("attempt_groups", {
+  id: uuid("id").primaryKey(),
+  attemptId: uuid("attempt_id").notNull().references(() => attempts.id, { onDelete: "restrict" }),
+  revisionId: uuid("revision_id").notNull().references(() => exerciseRevisions.id, { onDelete: "restrict" }),
+  ordinal: integer("ordinal").notNull(),
+}, (t) => [
+  unique("attempt_group_order_unique").on(t.attemptId, t.ordinal),
+  unique("attempt_group_revision_unique").on(t.attemptId, t.revisionId),
+  unique("attempt_group_composite_unique").on(t.id, t.attemptId, t.revisionId),
+  check("attempt_group_ordinal_positive", sql`${t.ordinal} > 0`),
+  index("attempt_groups_revision_idx").on(t.revisionId),
+]);
+
+export const attemptItems = pgTable("attempt_items", {
+  id: uuid("id").primaryKey(),
+  attemptId: uuid("attempt_id").notNull(),
+  groupId: uuid("group_id").notNull(),
+  revisionId: uuid("revision_id").notNull(),
+  itemId: uuid("item_id").notNull(),
+  globalPosition: integer("global_position").notNull(),
+  responseJson: jsonb("response_json"),
+  responseVersion: integer("response_version").notNull().default(0),
+  savedAt: timestamp("saved_at", { withTimezone: true }),
+  outcome: text("outcome"),
+  pointsPossible: numeric("points_possible", { precision: 8, scale: 2 }).notNull(),
+  pointsAwarded: numeric("points_awarded", { precision: 8, scale: 2 }),
+}, (t) => [
+  unique("attempt_item_position_unique").on(t.attemptId, t.globalPosition),
+  unique("attempt_group_item_unique").on(t.groupId, t.itemId),
+  foreignKey({ columns: [t.groupId, t.attemptId, t.revisionId], foreignColumns: [attemptGroups.id, attemptGroups.attemptId, attemptGroups.revisionId], name: "attempt_item_group_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [t.revisionId, t.itemId], foreignColumns: [exerciseItems.revisionId, exerciseItems.id], name: "attempt_item_source_fk" }).onDelete("restrict"),
+  check("attempt_item_position_positive", sql`${t.globalPosition} > 0`),
+  check("attempt_response_version_nonnegative", sql`${t.responseVersion} >= 0`),
+  check("attempt_outcome_check", sql`${t.outcome} IN ('correct', 'incorrect', 'omitted', 'ungraded')`),
+  check("attempt_item_score_valid", sql`${t.pointsAwarded} IS NULL OR (${t.pointsAwarded} >= 0 AND ${t.pointsAwarded} <= ${t.pointsPossible})`),
+  index("attempt_items_item_idx").on(t.revisionId, t.itemId),
+]);
