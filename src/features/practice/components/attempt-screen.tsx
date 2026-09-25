@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataOrThrow, practice } from "../api";
+import { VisibleActivity } from "@/features/history/components/visible-activity";
 
 type Attempt = Extract<Awaited<ReturnType<typeof import("@/features/practice/engine").detail>>, { groups: unknown }>;
 function Clock({ attempt }: { attempt: Attempt }) {
@@ -36,7 +37,7 @@ function Activity({ id }: { id: string }) {
   const group = current.groups.find((value) => value.id === item.groupId)!;
   const omissions = current.items.filter((value) => !value.response).length;
   const busy = save.isPending || move.isPending || submit.isPending;
-  return <article><h1>{group.content.title}</h1><Clock attempt={current} />
+  return <article>{current.status === "in_progress" && <VisibleActivity id={id} />}<h1>{group.content.title}</h1><Clock attempt={current} />
     {current.status === "prepared" ? <><p>{current.materialCount} materiales · {current.itemCount} preguntas. Revisa que el contenido esté listo antes de iniciar el reloj.</p><button disabled={start.isPending} onClick={() => start.mutate()}>Iniciar práctica</button></> : <>
       <section aria-label="Pasaje"><h2>Pasaje</h2><p style={{ whiteSpace: "pre-wrap" }}>{group.content.passage}</p></section>
       <section aria-label="Pregunta"><h2>Pregunta {current.currentPosition} de {current.itemCount}</h2><p>{item.prompt.question}</p>
