@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { hc } from "hono/client";
 import type { EditorialAppType } from "@/app/api/editorial/[[...route]]/route";
+import type { EditorialAudioAppType } from "@/app/api/editorial/audio/route";
 import { exampleR3 } from "../example-r3";
 import { createSchema, revisionSchema } from "../schemas";
 
 const api = hc<EditorialAppType>("/").api.editorial;
+const audioApi = hc<EditorialAudioAppType>("/").api.editorial.audio;
 type List = Awaited<ReturnType<typeof api.$get>>;
 type Row = Extract<Awaited<ReturnType<List["json"]>>, { data: unknown }> extends { data: infer T } ? T extends Array<infer U> ? U : never : never;
 
@@ -20,6 +22,9 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
   const [draft, setDraft] = useState(JSON.stringify(exampleR3, null, 2));
   const [message, setMessage] = useState("");
   const [humanReviewed, setHumanReviewed] = useState(false);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioDuration, setAudioDuration] = useState("");
+  const [audioRights, setAudioRights] = useState("");
 
   const refresh = useCallback(async (id?: string) => {
     const list = await api.$get();
@@ -73,6 +78,19 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
     }
   }
 
+  async function uploadL2Audio() {
+    if (!audioFile) return;
+    try {
+      const response = await audioApi.$post({ form: { audio: audioFile, durationMs: audioDuration, rightsNote: audioRights } });
+      const result = await response.json();
+      if (!response.ok || !("data" in result)) { setMessage("error" in result && typeof result.error === "string" ? result.error : "Error de carga"); return; }
+      const parsed = revisionSchema.safeParse(JSON.parse(draft));
+      if (!parsed.success) { setMessage("Corrige el JSON de la revisión antes de añadir el audio"); return; }
+      setDraft(JSON.stringify({ ...parsed.data, assets: [...parsed.data.assets.filter((asset) => asset.role !== "stimulus" || asset.kind !== "audio"), result.data] }, null, 2));
+      setMessage("Audio público almacenado; guarda el borrador para vincularlo a la revisión");
+    } catch { setMessage("No se pudo cargar el audio"); }
+  }
+
   async function action(name: "submit" | "approve" | "reject" | "publish" | "retire") {
     if (!selected) return;
     const param = { id: selected };
@@ -104,6 +122,12 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
       <label>Tema <input value={topic} onChange={(event) => setTopic(event.target.value)} disabled={!!selected} /></label>
       <label>Dificultad <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)} disabled={!!selected}><option>intro</option><option>intermediate</option><option>advanced</option></select></label>
       <label>Revisión JSON <textarea rows={26} value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="Contenido editorial JSON" /></label>
+      {typeCode === "L2" && <fieldset><legend>Audio original versionado (Vercel Blob público)</legend>
+        <label>Archivo MP3 o M4A <input type="file" accept="audio/mpeg,audio/mp4" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)} /></label>
+        <label>Duración en milisegundos <input type="number" min="1" value={audioDuration} onChange={(event) => setAudioDuration(event.target.value)} /></label>
+        <label>Derechos <input value={audioRights} onChange={(event) => setAudioRights(event.target.value)} /></label>
+        <button type="button" disabled={!audioFile || !audioRights || !audioDuration} onClick={() => void uploadL2Audio()}>Subir audio y añadir metadatos al JSON</button>
+      </fieldset>}
       {!selected && <button type="button" onClick={() => void save("new")}>Crear borrador</button>}
       {current?.revision.status === "draft" && (admin || current.revision.authorId === actorId) && <button type="button" onClick={() => void save("edit")}>Guardar borrador</button>}
       {current && <button type="button" onClick={() => void save("revision")}>Crear nueva revisión con este contenido</button>}

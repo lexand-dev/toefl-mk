@@ -100,7 +100,7 @@ it("rejects missing or invalid content, wrong keys and missing L2 audio before r
   expect(l2Created.status).toBe(201);
   const { data: { id: l2Id } } = await l2Created.json();
   expect(JSON.stringify(await (await call(`/${l2Id}/submit`, "POST", author)).json())).toContain("audio L2");
-  const withAudio = { ...l2, assets: [{ kind: "audio", storageKey: "https://example.test/audio/v1.mp3", mimeType: "audio/mpeg", sha256Hex: "b".repeat(64), byteSize: 1024, durationMs: 7000, rightsNote: "Original recording", role: "stimulus", sortOrder: 1 }] };
+  const withAudio = { ...l2, assets: [{ kind: "audio", storageKey: `https://store.public.blob.vercel-storage.com/l2/123e4567-e89b-12d3-a456-426614174000/${"b".repeat(64)}.mp3`, mimeType: "audio/mpeg", sha256Hex: "b".repeat(64), byteSize: 1024, durationMs: 7000, rightsNote: "Original recording", role: "stimulus", sortOrder: 1 }] };
   expect((await call(`/${l2Id}`, "PUT", author, withAudio)).status).toBe(200);
   expect((await call(`/${l2Id}`, "PUT", author, withAudio)).status).toBe(200);
   expect((await db.select().from(assets))).toHaveLength(1);

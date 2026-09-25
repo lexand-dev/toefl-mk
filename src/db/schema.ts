@@ -221,3 +221,14 @@ export const attemptItems = pgTable("attempt_items", {
   check("attempt_item_score_valid", sql`${t.pointsAwarded} IS NULL OR (${t.pointsAwarded} >= 0 AND ${t.pointsAwarded} <= ${t.pointsPossible})`),
   index("attempt_items_item_idx").on(t.revisionId, t.itemId),
 ]);
+
+export const l2Sessions = pgTable("l2_sessions", {
+  attemptId: uuid("attempt_id").primaryKey().references(() => attempts.id, { onDelete: "restrict" }),
+  playbackStartedAt: timestamp("playback_started_at", { withTimezone: true }),
+  listeningDeadlineAt: timestamp("listening_deadline_at", { withTimezone: true }),
+  responseStartedAt: timestamp("response_started_at", { withTimezone: true }),
+  questionDeadlineAt: timestamp("question_deadline_at", { withTimezone: true }),
+  incidentAt: timestamp("incident_at", { withTimezone: true }),
+  incidentReason: text("incident_reason"),
+  incidentCount: integer("incident_count").notNull().default(0),
+}, (t) => [check("l2_incident_count_nonnegative", sql`${t.incidentCount} >= 0`)]);
