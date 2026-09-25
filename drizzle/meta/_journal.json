@@ -15,6 +15,13 @@
       "when": 1790313883576,
       "tag": "0001_stale_jimmy_woo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790327118823,
+      "tag": "0002_dashing_nico_minoru",
+      "breakpoints": true
     }
   ]
 }
