@@ -22,6 +22,13 @@
       "when": 1790327118823,
       "tag": "0002_dashing_nico_minoru",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790328276584,
+      "tag": "0003_salty_abomination",
+      "breakpoints": true
     }
   ]
 }
