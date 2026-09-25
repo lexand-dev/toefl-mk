@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 Cuenta y acceso.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Material, revisión, ítems, claves privadas, recurso y procedencia conservan las relaciones y restricciones de la especificación.
 - [ ] El contenido variable se valida por tipo antes de publicar; faltantes, claves inválidas o audio L2 ausente bloquean publicación.
