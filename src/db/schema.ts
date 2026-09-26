@@ -221,3 +221,15 @@ export const attemptItems = pgTable("attempt_items", {
   check("attempt_item_score_valid", sql`${t.pointsAwarded} IS NULL OR (${t.pointsAwarded} >= 0 AND ${t.pointsAwarded} <= ${t.pointsPossible})`),
   index("attempt_items_item_idx").on(t.revisionId, t.itemId),
 ]);
+
+export const writingTaskTimes = pgTable("writing_task_times", {
+  itemId: uuid("item_id").primaryKey().references(() => attemptItems.id, { onDelete: "restrict" }),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+});
+
+export const writingSelfReviews = pgTable("writing_self_reviews", {
+  attemptId: uuid("attempt_id").primaryKey().references(() => attempts.id, { onDelete: "restrict" }),
+  checklist: jsonb("checklist").notNull(),
+  version: integer("version").notNull().default(0),
+}, (t) => [check("writing_self_review_version_nonnegative", sql`${t.version} >= 0`)]);

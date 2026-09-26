@@ -20,3 +20,4 @@ nav { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0; }
 select { font: inherit; padding: .65rem; border: 1px solid #6d7e8d; border-radius: .25rem; }
 .w1-tokens, .w1-placed li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
 .w1-placed li span { margin-right: .5rem; }
+.w2-editor textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .65rem; border: 1px solid #6d7e8d; border-radius: .25rem; }
