@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Los recursos publicados se almacenan como blobs versionados con metadatos, hash y derechos; la entrega de audio queda aislada de las claves.
 - [ ] Inicio de reproducción, fin de audio y plazo de respuesta se distinguen con etiquetas y registros separados.
