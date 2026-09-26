@@ -12,6 +12,15 @@ const audioApi = hc<EditorialAudioAppType>("/").api.editorial.audio;
 type List = Awaited<ReturnType<typeof api.$get>>;
 type Row = Extract<Awaited<ReturnType<List["json"]>>, { data: unknown }> extends { data: infer T } ? T extends Array<infer U> ? U : never : never;
 
+function previewContent(content: Record<string, unknown>) {
+  if (Array.isArray(content.segments)) return content.segments.map((value) => {
+    if (!value || typeof value !== "object") return "";
+    const segment = value as { kind?: unknown; text?: unknown; stem?: unknown };
+    return segment.kind === "text" ? String(segment.text ?? "") : segment.kind === "gap" ? `${String(segment.stem ?? "")}___` : "";
+  }).join("");
+  return String(content.passage ?? content.text ?? content.description ?? content.situation ?? content.context ?? "");
+}
+
 export function Workbench({ admin, actorId }: { admin: boolean; actorId: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -102,7 +111,7 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
     if (await readResponse(response)) { await refresh(selected); await open(selected); }
   }
 
-  const current = detail as null | { revision: { status: string; authorId: string; reviewedBy: string | null; revisionNumber: number; exerciseId: string; publicContent: Record<string, unknown> }; exercise: { typeCode: string }; items: { ordinal: number; publicPrompt: { question?: string; instruction?: string; sentence?: string; options?: { id: string; text: string }[] }; key?: { acceptedAnswers: unknown; explanation: string } }[]; assets: { kind: string; storageKey: string; role: string }[] };
+  const current = detail as null | { revision: { status: string; authorId: string; reviewedBy: string | null; revisionNumber: number; exerciseId: string; publicContent: Record<string, unknown> }; exercise: { typeCode: string }; items: { ordinal: number; publicPrompt: { question?: string; instruction?: string; sentence?: string; gapId?: string; options?: { id: string; text: string }[] }; key?: { acceptedAnswers: unknown; explanation: string } }[]; assets: { kind: string; storageKey: string; role: string }[] };
   return <section>
     <p>Solo una persona distinta del autor puede aprobar. La muestra R3 es un borrador original sin revisión humana; no la publiques hasta comprobarla.</p>
     <nav><button type="button" onClick={() => { setSelected(null); setDetail(null); setDraft(JSON.stringify(exampleR3, null, 2)); setTypeCode("R3"); setHumanReviewed(false); }}>Nuevo material R3 de ejemplo</button></nav>
@@ -111,8 +120,8 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
     {current && <p>Revisión {current.revision.revisionNumber}: {current.revision.status}. {current.items.length} ítems. {current.revision.reviewedBy ? "Aprobada por una persona distinta del autor." : "Pendiente de aprobación."}</p>}
     {current && <section aria-label="Previsualización editorial"><h2>Previsualización</h2>
       <h3>{String(current.revision.publicContent.title ?? current.exercise.typeCode)}</h3>
-      <p>{String(current.revision.publicContent.passage ?? current.revision.publicContent.text ?? current.revision.publicContent.description ?? current.revision.publicContent.situation ?? current.revision.publicContent.context ?? "")}</p>
-      <ol>{current.items.map((item) => <li key={item.ordinal}><p>{item.publicPrompt.question ?? item.publicPrompt.instruction ?? item.publicPrompt.sentence}</p><ul>{item.publicPrompt.options?.map((option) => <li key={option.id}>{option.id}: {option.text}</li>)}</ul><p>Clave privada: {JSON.stringify(item.key?.acceptedAnswers ?? null)}. {item.key?.explanation}</p></li>)}</ol>
+      <p style={{ whiteSpace: "pre-wrap" }}>{previewContent(current.revision.publicContent)}</p>
+      <ol>{current.items.map((item) => <li key={item.ordinal}><p>{item.publicPrompt.question ?? item.publicPrompt.instruction ?? item.publicPrompt.sentence ?? (item.publicPrompt.gapId ? `Hueco ${item.publicPrompt.gapId}` : "")}</p><ul>{item.publicPrompt.options?.map((option) => <li key={option.id}>{option.id}: {option.text}</li>)}</ul><p>Clave privada: {JSON.stringify(item.key?.acceptedAnswers ?? null)}. {item.key?.explanation}</p></li>)}</ol>
       <ul>{current.assets.map((asset) => <li key={asset.storageKey}>{asset.role}: {asset.kind} — {asset.storageKey}{asset.kind === "audio" && /^https:\/\//.test(asset.storageKey) && <audio controls src={asset.storageKey} />}{asset.kind === "image" && /^https:\/\//.test(asset.storageKey) && <a href={asset.storageKey}>Abrir imagen</a>}</li>)}</ul>
     </section>}
     <h2>{selected ? "Previsualizar y editar revisión" : "Crear borrador"}</h2>
