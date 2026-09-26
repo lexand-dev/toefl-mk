@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] El contenido publicado identifica huecos, segmentos visibles, soluciones privadas y explicaciones sin revelar claves.
 - [ ] El guardado por hueco y la navegación respetan versión de respuesta, propietario y plazo.
