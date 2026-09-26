@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataOrThrow, l2 } from "../api";
+import { VisibleActivity } from "@/features/history/components/visible-activity";
 
 type Attempt = Extract<Awaited<ReturnType<typeof import("../engine").detail>>, { groups: unknown }>;
 
@@ -76,7 +77,7 @@ function Activity({ id }: { id: string }) {
   const group = current.groups.find((g) => g.id === item.groupId)!;
   const busy = playback.isPending || ended.isPending || save.isPending || next.isPending || submit.isPending;
   const omissions = current.items.filter((i) => !i.response).length;
-  return <article><h1>{group.content.title}</h1><p>{group.content.description}</p>
+  return <article>{current.status === "in_progress" && <VisibleActivity id={id} />}<h1>{group.content.title}</h1><p>{group.content.description}</p>
     <p>Conversación {group.ordinal} de {current.materialCount} · pregunta {current.currentPosition} de {current.itemCount}.</p>
     <p>Audio: {Math.ceil(group.audio.durationMs! / 1000)} s · Respuesta: {current.rules.secondsPerQuestion} s por pregunta · Sesión desde: {current.startedAt ? new Date(current.startedAt).toLocaleTimeString() : "pendiente"}.</p>
     <PhaseClock attempt={current} />

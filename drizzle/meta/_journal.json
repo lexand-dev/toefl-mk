@@ -43,6 +43,13 @@
       "when": 1790383283561,
       "tag": "0005_short_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790383557092,
+      "tag": "0006_wise_scarlet_witch",
+      "breakpoints": true
     }
   ]
 }

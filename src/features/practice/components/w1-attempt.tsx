@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataOrThrow } from "../api";
 import { w1Client } from "../w1-client";
+import { VisibleActivity } from "@/features/history/components/visible-activity";
 
 type Attempt = Extract<Awaited<ReturnType<typeof import("@/features/practice/w1").detail>>, { groups: unknown }>;
 
@@ -50,7 +51,7 @@ function Activity({ id }: { id: string }) {
     focusTarget.current = target;
     save.mutate({ itemId: item.id, version: item.version, tokenIds });
   };
-  return <article><h1>Construir oraciones W1</h1><Clock attempt={current} />
+  return <article>{current.status === "in_progress" && <VisibleActivity id={id} />}<h1>Construir oraciones W1</h1><Clock attempt={current} />
     {current.status === "prepared" ? <><p>{current.materialCount} materiales · {current.itemCount} oraciones. Revisa el contenido antes de iniciar el reloj.</p><button disabled={start.isPending} onClick={() => start.mutate()}>Iniciar práctica</button></> : <>
       <p>{group.content.context}</p>
       <section aria-label="Oración"><h2>Oración {current.currentPosition} de {current.itemCount}</h2><p>{item.prompt.instruction}</p>

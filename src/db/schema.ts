@@ -244,3 +244,9 @@ export const l2Sessions = pgTable("l2_sessions", {
   incidentReason: text("incident_reason"),
   incidentCount: integer("incident_count").notNull().default(0),
 }, (t) => [check("l2_incident_count_nonnegative", sql`${t.incidentCount} >= 0`)]);
+
+export const attemptActivity = pgTable("attempt_activity", {
+  attemptId: uuid("attempt_id").primaryKey().references(() => attempts.id, { onDelete: "restrict" }),
+  lastVisibleAt: timestamp("last_visible_at", { withTimezone: true }),
+  activeMilliseconds: bigint("active_milliseconds", { mode: "number" }).notNull().default(0),
+}, (t) => [check("activity_nonnegative", sql`${t.activeMilliseconds} >= 0`)]);

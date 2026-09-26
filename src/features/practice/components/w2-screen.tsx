@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { dataOrThrow, practice } from "../api";
 import { reviewLabels, type Checklist } from "../w2-schemas";
+import { VisibleActivity } from "@/features/history/components/visible-activity";
 
 type Attempt = Extract<Awaited<ReturnType<typeof import("../w2").detail>>, { groups: unknown }>;
 type Item = Attempt["items"][number];
@@ -127,7 +128,7 @@ function Activity({ id }: { id: string }) {
     if (!current.selfReview) return;
     await act(async () => dataOrThrow(await endpoint(id)["self-review"].$put({ param: { id }, json: { version: current.selfReview!.version, checklist: { ...current.selfReview!.checklist, [key]: checked } } })));
   }
-  return <article>{current.status !== "in_progress" && <Link href="/app/practice?type=W2">Volver a W2 e historial</Link>}
+  return <article>{current.status === "in_progress" && <VisibleActivity id={id} />}{current.status !== "in_progress" && <Link href="/app/practice?type=W2">Volver a W2 e historial</Link>}
     <h1>Correo {current.currentPosition} de {current.itemCount}</h1>
     <p>{current.materialCount} materiales · {current.itemCount} tareas · sin puntuación objetiva</p>
     <Clock attempt={current} item={item} />
