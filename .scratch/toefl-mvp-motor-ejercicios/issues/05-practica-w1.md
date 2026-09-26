@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Las piezas mantienen identificadores distintos aun cuando su texto se repite.
 - [ ] La interacción funciona mediante teclado, con foco y estado accesibles.
