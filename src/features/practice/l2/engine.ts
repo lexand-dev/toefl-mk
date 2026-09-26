@@ -4,6 +4,7 @@ import { answerKeys, assets, attemptGroups, attemptItems, attempts, exerciseItem
 import { publicQuestion, gradeOption } from "../r3";
 import { contentSchemas } from "@/features/editorial/schemas";
 import { l2Rules } from "./schemas";
+import { dispatchPendingDeadlines, enqueueDeadline, triggerDeadlineScheduler, type DeadlineScheduler } from "../deadlines";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Connection = typeof db | Tx;
@@ -11,6 +12,7 @@ type Attempt = typeof attempts.$inferSelect;
 type Session = typeof l2Sessions.$inferSelect;
 export type L2Error = { error: string; status: 404 | 409 | 422 };
 const failure = (error: string, status: L2Error["status"]): L2Error => ({ error, status });
+const mayDispatch = (result: object) => !("error" in result) || (result as L2Error).status !== 404;
 const time = async (tx: Connection) => new Date((await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`)).rows[0].now);
 const after = (date: Date, seconds: number) => new Date(date.getTime() + seconds * 1000);
 
@@ -93,7 +95,7 @@ async function reconcile(tx: Tx, attempt: Attempt, session: Session, now: Date) 
   }
   let deadline = session.questionDeadlineAt;
   if (!deadline) return;
-  const positions = await tx.select({ position: attemptItems.globalPosition, groupId: attemptItems.groupId }).from(attemptItems).where(eq(attemptItems.attemptId, attempt.id)).orderBy(asc(attemptItems.globalPosition));
+  const positions = await tx.select({ id: attemptItems.id, position: attemptItems.globalPosition, groupId: attemptItems.groupId }).from(attemptItems).where(eq(attemptItems.attemptId, attempt.id)).orderBy(asc(attemptItems.globalPosition));
   let position = attempt.currentPosition;
   while (deadline && now >= deadline) {
     const current = positions[position - 1];
@@ -114,10 +116,14 @@ async function reconcile(tx: Tx, attempt: Attempt, session: Session, now: Date) 
     await tx.update(l2Sessions).set({ responseStartedAt: start, questionDeadlineAt: deadline }).where(eq(l2Sessions.attemptId, attempt.id));
     await tx.update(attempts).set({ currentPosition: position }).where(eq(attempts.id, attempt.id));
   }
+  if (deadline) {
+    const current = positions[position - 1];
+    await enqueueDeadline(tx, { attemptId: attempt.id, kind: "l2_question", targetId: current.id, deadlineAt: deadline });
+  }
 }
 
-export async function detail(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function detail(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -147,10 +153,12 @@ export async function detail(id: string, userId: string) {
         ...(submitted ? { outcome: i.outcome, pointsPossible: Number(i.pointsPossible), pointsAwarded: Number(i.pointsAwarded), correctOptionId: (keys.find((k) => k.itemId === i.itemId && k.revisionId === i.revisionId)?.acceptedAnswers as string[])[0], explanation: keys.find((k) => k.itemId === i.itemId && k.revisionId === i.revisionId)?.explanation } : {}) })),
     };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function startPlayback(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function startPlayback(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -159,18 +167,22 @@ export async function startPlayback(id: string, userId: string) {
     const [attempt] = await tx.select().from(attempts).where(eq(attempts.id, id));
     if (attempt.status === "submitted" || session.questionDeadlineAt) return failure("Reproducción no disponible", 409);
     if (session.playbackStartedAt && !session.incidentAt) return { id };
-    const [item] = await tx.select({ revisionId: attemptItems.revisionId }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, attempt.currentPosition)));
+    const [item] = await tx.select({ id: attemptItems.id, revisionId: attemptItems.revisionId }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, attempt.currentPosition)));
     const [audio] = await tx.select({ durationMs: assets.durationMs }).from(revisionAssets).innerJoin(assets, eq(assets.id, revisionAssets.assetId))
       .where(and(eq(revisionAssets.revisionId, item.revisionId), eq(revisionAssets.role, "stimulus")));
     if (!audio?.durationMs) throw new Error("Falta audio de una revisión publicada");
     await tx.update(attempts).set({ status: "in_progress", startedAt: attempt.startedAt ?? now }).where(eq(attempts.id, id));
-    await tx.update(l2Sessions).set({ playbackStartedAt: now, listeningDeadlineAt: after(now, Math.ceil(audio.durationMs / 1000) + l2Rules.listeningGraceSeconds), incidentAt: null, incidentReason: null }).where(eq(l2Sessions.attemptId, id));
+    const listeningDeadlineAt = after(now, Math.ceil(audio.durationMs / 1000) + l2Rules.listeningGraceSeconds);
+    await tx.update(l2Sessions).set({ playbackStartedAt: now, listeningDeadlineAt, incidentAt: null, incidentReason: null }).where(eq(l2Sessions.attemptId, id));
+    await enqueueDeadline(tx, { attemptId: id, kind: "l2_listening", targetId: item.id, deadlineAt: listeningDeadlineAt });
     return { id };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function audioEnded(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function audioEnded(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -178,17 +190,21 @@ export async function audioEnded(id: string, userId: string) {
     const [session] = await tx.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
     if (session.incidentAt || !session.playbackStartedAt || state.attempt.status !== "in_progress") return failure("Audio no disponible", 409);
     if (!session.questionDeadlineAt) {
-      const [item] = await tx.select({ revisionId: attemptItems.revisionId }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, state.attempt.currentPosition)));
+      const [item] = await tx.select({ id: attemptItems.id, revisionId: attemptItems.revisionId }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, state.attempt.currentPosition)));
       const [audio] = await tx.select({ durationMs: assets.durationMs }).from(revisionAssets).innerJoin(assets, eq(assets.id, revisionAssets.assetId)).where(and(eq(revisionAssets.revisionId, item.revisionId), eq(revisionAssets.role, "stimulus")));
       if (!audio?.durationMs || now.getTime() - session.playbackStartedAt.getTime() < Math.max(0, audio.durationMs - 1000)) return failure("El audio aún no ha terminado", 409);
-      await tx.update(l2Sessions).set({ listeningDeadlineAt: null, responseStartedAt: now, questionDeadlineAt: after(now, l2Rules.secondsPerQuestion) }).where(eq(l2Sessions.attemptId, id));
+      const questionDeadlineAt = after(now, l2Rules.secondsPerQuestion);
+      await tx.update(l2Sessions).set({ listeningDeadlineAt: null, responseStartedAt: now, questionDeadlineAt }).where(eq(l2Sessions.attemptId, id));
+      await enqueueDeadline(tx, { attemptId: id, kind: "l2_question", targetId: item.id, deadlineAt: questionDeadlineAt });
     }
     return { id };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function reportIncident(id: string, userId: string, reason: "load_failed" | "playback_failed" | "audio_stalled") {
-  return db.transaction(async (tx) => {
+export async function reportIncident(id: string, userId: string, reason: "load_failed" | "playback_failed" | "audio_stalled", scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -198,10 +214,12 @@ export async function reportIncident(id: string, userId: string, reason: "load_f
     if (!session.incidentAt) await tx.update(l2Sessions).set({ incidentAt: now, incidentReason: reason, incidentCount: session.incidentCount + 1, playbackStartedAt: null, listeningDeadlineAt: null }).where(eq(l2Sessions.attemptId, id));
     return { id };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function save(id: string, userId: string, itemId: string, version: number, optionId: string) {
-  return db.transaction(async (tx) => {
+export async function save(id: string, userId: string, itemId: string, version: number, optionId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -217,10 +235,12 @@ export async function save(id: string, userId: string, itemId: string, version: 
     await tx.update(attemptItems).set({ responseJson: { optionId }, responseVersion: version + 1, savedAt: now }).where(eq(attemptItems.id, itemId));
     return { version: version + 1, savedAt: now.toISOString() };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function next(id: string, userId: string, position: number) {
-  return db.transaction(async (tx) => {
+export async function next(id: string, userId: string, position: number, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
@@ -232,21 +252,41 @@ export async function next(id: string, userId: string, position: number) {
     if (!current.response) return failure("Responde antes de avanzar", 409);
     const [target] = await tx.select({ groupId: attemptItems.groupId }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, position)));
     if (!target) return failure("Posición inválida", 422);
+    const questionDeadlineAt = target.groupId === current.groupId ? after(now, l2Rules.secondsPerQuestion) : null;
     await tx.update(attempts).set({ currentPosition: position }).where(eq(attempts.id, id));
-    await tx.update(l2Sessions).set({ responseStartedAt: target.groupId === current.groupId ? now : null, questionDeadlineAt: target.groupId === current.groupId ? after(now, l2Rules.secondsPerQuestion) : null, playbackStartedAt: null, listeningDeadlineAt: null }).where(eq(l2Sessions.attemptId, id));
+    await tx.update(l2Sessions).set({ responseStartedAt: questionDeadlineAt ? now : null, questionDeadlineAt, playbackStartedAt: null, listeningDeadlineAt: null }).where(eq(l2Sessions.attemptId, id));
+    if (questionDeadlineAt) {
+      const [targetItem] = await tx.select({ id: attemptItems.id }).from(attemptItems).where(and(eq(attemptItems.attemptId, id), eq(attemptItems.globalPosition, position)));
+      await enqueueDeadline(tx, { attemptId: id, kind: "l2_question", targetId: targetItem.id, deadlineAt: questionDeadlineAt });
+    }
     return { currentPosition: position };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function submit(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function submit(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const state = await locked(tx, id, userId);
     if (!state) return failure("No encontrado", 404);
     const now = await time(tx);
     await reconcile(tx, state.attempt, state.session, now);
     const [attempt] = await tx.select().from(attempts).where(eq(attempts.id, id));
-    if (attempt.status === "prepared" || (attempt.status === "in_progress" && !state.session.questionDeadlineAt)) return failure("Termina el audio antes de entregar", 409);
+    const [session] = await tx.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
+    if (attempt.status === "prepared" || (attempt.status === "in_progress" && !session.questionDeadlineAt)) return failure("Termina el audio antes de entregar", 409);
     await close(tx, attempt, now);
     return { id };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
+}
+
+export async function reconcileDeadline(id: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  await db.transaction(async (tx) => {
+    const [attempt] = await tx.select().from(attempts).where(and(eq(attempts.id, id), eq(attempts.typeCode, "L2"))).for("update");
+    if (!attempt) throw new Error(`L2 attempt ${id} does not exist`);
+    const [session] = await tx.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
+    await reconcile(tx, attempt, session, await time(tx));
+  });
+  await dispatchPendingDeadlines(id, scheduler);
 }

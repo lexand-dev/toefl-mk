@@ -250,3 +250,27 @@ export const attemptActivity = pgTable("attempt_activity", {
   lastVisibleAt: timestamp("last_visible_at", { withTimezone: true }),
   activeMilliseconds: bigint("active_milliseconds", { mode: "number" }).notNull().default(0),
 }, (t) => [check("activity_nonnegative", sql`${t.activeMilliseconds} >= 0`)]);
+
+export const deadlineJobs = pgTable("deadline_jobs", {
+  id: uuid("id").primaryKey(),
+  attemptId: uuid("attempt_id").notNull().references(() => attempts.id, { onDelete: "restrict" }),
+  kind: text("kind").notNull(),
+  targetId: uuid("target_id"),
+  deadlineAt: timestamp("deadline_at", { withTimezone: true }).notNull(),
+  deadlineKey: text("deadline_key").notNull(),
+  status: text("status").notNull().default("pending"),
+  scheduleAttempts: integer("schedule_attempts").notNull().default(0),
+  triggerRunId: text("trigger_run_id"),
+  lastError: text("last_error"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("deadline_jobs_key_unique").on(t.deadlineKey),
+  index("deadline_jobs_recovery_idx").on(t.status, t.deadlineAt),
+  index("deadline_jobs_attempt_idx").on(t.attemptId),
+  check("deadline_jobs_kind_check", sql`${t.kind} IN ('attempt', 'w2_task', 'l2_listening', 'l2_question')`),
+  check("deadline_jobs_status_check", sql`${t.status} IN ('pending', 'scheduled', 'failed', 'completed')`),
+  check("deadline_jobs_schedule_attempts_nonnegative", sql`${t.scheduleAttempts} >= 0`),
+]);

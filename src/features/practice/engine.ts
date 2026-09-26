@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { answerKeys, attemptGroups, attemptItems, attempts, exerciseItems, exerciseRevisions, exercises } from "@/db/schema";
 import { r3Rules } from "./schemas";
 import { gradeOption, publicPassage, publicQuestion, validOption } from "./r3";
+import { dispatchPendingDeadlines, enqueueDeadline, triggerDeadlineScheduler, type DeadlineScheduler } from "./deadlines";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Connection = typeof db | Tx;
@@ -117,8 +118,8 @@ export async function detail(id: string, userId: string) {
   });
 }
 
-export async function start(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function start(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await lockedAttempt(tx, id, userId);
     if (!attempt) return failure("No encontrado", 404);
     const now = await serverTime(tx);
@@ -126,10 +127,14 @@ export async function start(id: string, userId: string) {
     if (status === "submitted") return failure("Intento entregado", 409);
     if (status === "prepared") {
       const rules = attempt.rulesSnapshot as typeof r3Rules;
-      await tx.update(attempts).set({ status: "in_progress", startedAt: now, deadlineAt: attempt.timerMode === "count_down" ? new Date(now.getTime() + rules.secondsPerGroup * attempt.requestedGroups * 1000) : null }).where(eq(attempts.id, id));
+      const deadlineAt = attempt.timerMode === "count_down" ? new Date(now.getTime() + rules.secondsPerGroup * attempt.requestedGroups * 1000) : null;
+      await tx.update(attempts).set({ status: "in_progress", startedAt: now, deadlineAt }).where(eq(attempts.id, id));
+      if (deadlineAt) await enqueueDeadline(tx, { attemptId: id, kind: "attempt", deadlineAt });
     }
     return { id };
   });
+  if (!("error" in result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
 export async function save(id: string, userId: string, itemId: string, version: number, response: { optionId: string } | null) {
@@ -169,4 +174,13 @@ export async function submit(id: string, userId: string) {
     await close(tx, attempt, await serverTime(tx));
     return { id };
   });
+}
+
+export async function reconcileDeadline(id: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  await db.transaction(async (tx) => {
+    const [attempt] = await tx.select().from(attempts).where(and(eq(attempts.id, id), eq(attempts.typeCode, "R3"))).for("update");
+    if (!attempt) throw new Error(`R3 attempt ${id} does not exist`);
+    await reconcile(tx, attempt, await serverTime(tx));
+  });
+  await dispatchPendingDeadlines(id, scheduler);
 }

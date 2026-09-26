@@ -3,7 +3,9 @@ import { NextRequest } from "next/server";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { attempts, attemptItems, users } from "@/db/schema";
+import { attempts, attemptItems, deadlineJobs, users, writingTaskTimes } from "@/db/schema";
+import { dispatchPendingDeadlines, type DeadlineSchedule, type DeadlineScheduler } from "@/features/practice/deadlines";
+import { runDeadlineJob } from "@/features/practice/deadline-runner";
 
 const mail = vi.hoisted(() => [] as { url: string }[]);
 vi.mock("@/lib/email", () => ({ sendTransactionalEmail: async (message: typeof mail[number]) => { mail.push(message); } }));
@@ -18,6 +20,14 @@ const call = (route: typeof practice | typeof editorial, prefix: string, path: s
 const ed = (path: string, method = "GET", cookie?: string, data?: unknown) => call(editorial, "editorial", path, method, cookie, data);
 const api = (path: string, method = "GET", cookie?: string, data?: unknown) => call(practice, "practice", `/w2${path}`, method, cookie, data);
 const fixture = (suffix: string) => ({ publicContent: { situation: `Situación ${suffix}`, recipient: "Profesora Rivera", task: "Solicita una reunión por correo" }, provenanceNote: "Original de prueba", rightsNote: "Autor original", items: [{ ordinal: 1, responseKind: "free_text", publicPrompt: { instruction: "Explica cuándo estás disponible" }, pointsPossible: 0, key: null }], assets: [], reviewContent: null });
+
+class TestScheduler implements DeadlineScheduler {
+  calls: DeadlineSchedule[] = [];
+  async schedule(input: DeadlineSchedule) {
+    this.calls.push(input);
+    return { runId: `run-${input.deadlineJobId}` };
+  }
+}
 
 beforeAll(async () => { await migrate(db, { migrationsFolder: "./drizzle" }); });
 beforeEach(async () => { mail.length = 0; await db.execute(sql`truncate table "account", "session", "verification", "users", "rate_limit", "exercises", "assets" cascade`); });
@@ -122,4 +132,39 @@ it("closes a timed-out task using PostgreSQL time and keeps an empty delivery un
   expect(after.items[0]).toMatchObject({ response: null, outcome: "ungraded" });
   expect(after.selfReview.checklist).toEqual({ task: false, organization: false, register: false, language: false });
   expect((await api(`/attempts/${id}/submit`, "POST", learner)).status).toBe(200);
+});
+
+it("schedules each W2 task and closes through chained delayed jobs without a browser", async () => {
+  const author = await actor("deadline-a@w2.test", "editor");
+  const reviewer = await actor("deadline-r@w2.test", "editor");
+  const admin = await actor("deadline-p@w2.test", "admin");
+  const learner = await actor("deadline-l@w2.test", "learner");
+  await publish(author, reviewer, admin, "primera");
+  await publish(author, reviewer, admin, "segunda");
+  const { data: { id } } = await (await api("/attempts", "POST", learner, { groups: 2, timerMode: "count_down" })).json();
+  await api(`/attempts/${id}/start`, "POST", learner);
+  const scheduler = new TestScheduler();
+  await dispatchPendingDeadlines(id, scheduler);
+  const [first] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  expect(first).toMatchObject({ kind: "w2_task", status: "scheduled" });
+
+  const expired = new Date(Date.now() - 1000);
+  await db.update(attempts).set({ deadlineAt: expired }).where(eq(attempts.id, id));
+  await db.update(writingTaskTimes).set({ deadlineAt: expired }).where(eq(writingTaskTimes.itemId, first.targetId!));
+  await db.update(deadlineJobs).set({ deadlineAt: expired }).where(eq(deadlineJobs.id, first.id));
+  await runDeadlineJob(first.id, scheduler);
+  const [advanced] = await db.select().from(attempts).where(eq(attempts.id, id));
+  expect(advanced).toMatchObject({ status: "in_progress", currentPosition: 2 });
+  const jobs = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  expect(jobs).toHaveLength(2);
+  const second = jobs.find((job) => job.id !== first.id)!;
+  expect(second).toMatchObject({ kind: "w2_task", status: "scheduled" });
+
+  await db.update(attempts).set({ deadlineAt: expired }).where(eq(attempts.id, id));
+  await db.update(writingTaskTimes).set({ deadlineAt: expired }).where(eq(writingTaskTimes.itemId, second.targetId!));
+  await db.update(deadlineJobs).set({ deadlineAt: expired }).where(eq(deadlineJobs.id, second.id));
+  await runDeadlineJob(second.id, scheduler);
+  const [closed] = await db.select().from(attempts).where(eq(attempts.id, id));
+  expect(closed).toMatchObject({ status: "submitted", pointsAwarded: null, pointsPossible: null });
+  expect((await db.select().from(attemptItems).where(eq(attemptItems.attemptId, id))).map((item) => item.outcome)).toEqual(["ungraded", "ungraded"]);
 });
