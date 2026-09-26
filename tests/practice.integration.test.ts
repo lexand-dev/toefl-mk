@@ -3,8 +3,10 @@ import { NextRequest } from "next/server";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { attempts, attemptItems, exerciseRevisions, users } from "@/db/schema";
+import { attempts, attemptItems, deadlineJobs, exerciseRevisions, users } from "@/db/schema";
 import { exampleR3 } from "@/features/editorial/example-r3";
+import { dispatchPendingDeadlines, recoverDeadlineSchedules, type DeadlineSchedule, type DeadlineScheduler } from "@/features/practice/deadlines";
+import { runDeadlineJob } from "@/features/practice/deadline-runner";
 
 const mail = vi.hoisted(() => [] as { subject: string; url: string }[]);
 vi.mock("@/lib/email", () => ({ sendTransactionalEmail: async (message: typeof mail[number]) => { mail.push(message); } }));
@@ -18,6 +20,20 @@ const call = (route: typeof practice | typeof editorial, prefix: string, path: s
 };
 const ed = (path: string, method = "GET", cookie?: string, data?: unknown) => call(editorial, "editorial", path, method, cookie, data);
 const api = (path: string, method = "GET", cookie?: string, data?: unknown) => call(practice, "practice", path, method, cookie, data);
+
+class TestScheduler implements DeadlineScheduler {
+  calls: DeadlineSchedule[] = [];
+  runs = new Map<string, string>();
+  fail = false;
+
+  async schedule(input: DeadlineSchedule) {
+    this.calls.push(input);
+    if (this.fail) throw new Error("Trigger API unavailable");
+    const runId = this.runs.get(input.idempotencyKey) ?? `run-${this.runs.size + 1}`;
+    this.runs.set(input.idempotencyKey, runId);
+    return { runId };
+  }
+}
 
 beforeAll(async () => { await migrate(db, { migrationsFolder: "./drizzle" }); });
 beforeEach(async () => {
@@ -148,4 +164,71 @@ it("uses database time for expiry and keeps saved answers while blocking late wr
   const { data: { id: untimed } } = await (await api("/attempts", "POST", learner, { typeCode: "R3", groups: 1, timerMode: "count_up" })).json();
   await api(`/attempts/${untimed}/start`, "POST", learner);
   expect((await (await api(`/attempts/${untimed}`, "GET", learner)).json()).data.deadlineAt).toBeNull();
+});
+
+it("closes through the delayed service without a browser and recovers failed scheduling idempotently", async () => {
+  const author = await actor("deadline-author@practice.test", "editor");
+  const reviewer = await actor("deadline-reviewer@practice.test", "editor");
+  const admin = await actor("deadline-admin@practice.test", "admin");
+  const learner = await actor("deadline-learner@practice.test", "learner");
+  await published(author, reviewer, admin);
+  const { data: { id } } = await (await api("/attempts", "POST", learner, { typeCode: "R3", groups: 1, timerMode: "count_down" })).json();
+  expect((await api(`/attempts/${id}/start`, "POST", learner)).status).toBe(200);
+
+  let [failed] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  expect(failed).toMatchObject({ kind: "attempt", status: "failed", scheduleAttempts: 1 });
+  expect(failed.lastError).toContain("inject a deadline scheduler");
+
+  const scheduler = new TestScheduler();
+  scheduler.fail = true;
+  await db.delete(deadlineJobs).where(eq(deadlineJobs.id, failed.id));
+  await recoverDeadlineSchedules(scheduler);
+  [failed] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  expect(failed).toMatchObject({ status: "failed", scheduleAttempts: 1 });
+  await dispatchPendingDeadlines(id, scheduler);
+  scheduler.fail = false;
+  await dispatchPendingDeadlines(id, scheduler);
+  await dispatchPendingDeadlines(id, scheduler);
+  const [scheduled] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.id, failed.id));
+  expect(scheduled).toMatchObject({ status: "scheduled", triggerRunId: "run-1", scheduleAttempts: 3, lastError: null });
+  expect(scheduler.calls.map((call) => call.idempotencyKey)).toEqual([failed.deadlineKey, failed.deadlineKey, failed.deadlineKey]);
+  expect(scheduler.runs.size).toBe(1);
+
+  const expired = new Date(Date.now() - 1000);
+  await db.update(attempts).set({ deadlineAt: expired }).where(eq(attempts.id, id));
+  await db.update(deadlineJobs).set({ deadlineAt: expired }).where(eq(deadlineJobs.id, failed.id));
+  await runDeadlineJob(failed.id, scheduler);
+  expect((await db.select().from(attempts).where(eq(attempts.id, id)))[0]).toMatchObject({ status: "submitted", pointsAwarded: "0.00", pointsPossible: "3.00" });
+  expect((await db.select().from(deadlineJobs).where(eq(deadlineJobs.id, failed.id)))[0].status).toBe("completed");
+});
+
+it("serializes a delayed job, save and manual submit on the attempt lock", async () => {
+  const author = await actor("race-author@practice.test", "editor");
+  const reviewer = await actor("race-reviewer@practice.test", "editor");
+  const admin = await actor("race-admin@practice.test", "admin");
+  const learner = await actor("race-learner@practice.test", "learner");
+  await published(author, reviewer, admin);
+  const { data: { id } } = await (await api("/attempts", "POST", learner, { typeCode: "R3", groups: 1, timerMode: "count_down" })).json();
+  await api(`/attempts/${id}/start`, "POST", learner);
+  const active = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
+  const [job] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  const expired = new Date(Date.now() - 1000);
+  await db.update(attempts).set({ deadlineAt: expired }).where(eq(attempts.id, id));
+  await db.update(deadlineJobs).set({ deadlineAt: expired, status: "scheduled" }).where(eq(deadlineJobs.id, job.id));
+
+  const scheduler = new TestScheduler();
+  const [jobResult, saveResult, submitResult] = await Promise.allSettled([
+    runDeadlineJob(job.id, scheduler),
+    api(`/attempts/${id}/items/${active.items[0].id}`, "PUT", learner, { version: 0, response: { optionId: "a" } }),
+    api(`/attempts/${id}/submit`, "POST", learner),
+  ]);
+  expect(jobResult.status).toBe("fulfilled");
+  expect(saveResult.status).toBe("fulfilled");
+  expect(submitResult.status).toBe("fulfilled");
+  if (saveResult.status === "fulfilled") expect([200, 409]).toContain(saveResult.value.status);
+  if (submitResult.status === "fulfilled") expect(submitResult.value.status).toBe(200);
+  const [closed] = await db.select().from(attempts).where(eq(attempts.id, id));
+  expect(closed.status).toBe("submitted");
+  expect(closed.submittedAt).not.toBeNull();
+  expect((await db.select().from(attemptItems).where(eq(attemptItems.attemptId, id))).every((item) => item.outcome !== null)).toBe(true);
 });

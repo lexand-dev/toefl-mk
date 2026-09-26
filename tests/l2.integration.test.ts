@@ -1,10 +1,13 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { attemptItems, attempts, l2Sessions, users } from "@/db/schema";
+import { attemptItems, attempts, deadlineJobs, l2Sessions, users } from "@/db/schema";
 import { exampleR3 } from "@/features/editorial/example-r3";
+import { dispatchPendingDeadlines, type DeadlineSchedule, type DeadlineScheduler } from "@/features/practice/deadlines";
+import { runDeadlineJob } from "@/features/practice/deadline-runner";
+import { startPlayback as startPlaybackService } from "@/features/practice/l2/engine";
 
 const mail = vi.hoisted(() => [] as { url: string }[]);
 const blobs = vi.hoisted(() => [] as { path: string; options: unknown }[]);
@@ -25,6 +28,14 @@ function call(route: typeof practice | typeof editorial, prefix: string, path: s
 const api = (path: string, method = "GET", cookie?: string, data?: unknown) => call(practice, "practice/l2", path, method, cookie, data);
 const ed = (path: string, method = "GET", cookie?: string, data?: unknown) => call(editorial, "editorial", path, method, cookie, data);
 const read = async (path: string, cookie: string) => (await (await api(path, "GET", cookie)).json()).data;
+
+class TestScheduler implements DeadlineScheduler {
+  calls: DeadlineSchedule[] = [];
+  async schedule(input: DeadlineSchedule) {
+    this.calls.push(input);
+    return { runId: `run-${input.deadlineJobId}` };
+  }
+}
 
 beforeAll(async () => { await migrate(db, { migrationsFolder: "./drizzle" }); });
 beforeEach(async () => {
@@ -180,6 +191,49 @@ it("closes on the final server deadline without a manual submission and never gr
   expect(closed.items.every((item: { outcome: string }) => item.outcome === "omitted")).toBe(true);
   expect((await api(`/attempts/${id}/items/${closed.items[3].id}`, "PUT", learner, { version: 0, response: { optionId: "a" } })).status).toBe(409);
   expect((await api(`/attempts/${id}/submit`, "POST", learner)).status).toBe(200);
+});
+
+it("runs listening and question phase boundaries durably and schedules reconciled follow-ups", async () => {
+  const { author, reviewer, admin, learner } = await fixture();
+  await publish(author, reviewer, admin, "Conversación dos");
+  const id = await prepared(learner);
+  await finishAudio(id, learner);
+  const scheduler = new TestScheduler();
+  await dispatchPendingDeadlines(id, scheduler);
+
+  const [firstQuestion] = await db.select().from(deadlineJobs).where(and(eq(deadlineJobs.attemptId, id), eq(deadlineJobs.kind, "l2_question")));
+  const justExpired = new Date(Date.now() - 1000);
+  await db.update(l2Sessions).set({ questionDeadlineAt: justExpired }).where(eq(l2Sessions.attemptId, id));
+  await db.update(deadlineJobs).set({ deadlineAt: justExpired }).where(eq(deadlineJobs.id, firstQuestion.id));
+  await runDeadlineJob(firstQuestion.id, scheduler);
+
+  const [afterQuestion] = await db.select().from(attempts).where(eq(attempts.id, id));
+  const [responseSession] = await db.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
+  expect(afterQuestion).toMatchObject({ status: "in_progress", currentPosition: 2 });
+  expect(responseSession.questionDeadlineAt!.getTime()).toBeGreaterThan(Date.now());
+  const questionJobs = await db.select().from(deadlineJobs).where(and(eq(deadlineJobs.attemptId, id), eq(deadlineJobs.kind, "l2_question")));
+  expect(questionJobs).toHaveLength(2);
+  const followUp = questionJobs.find((job) => job.id !== firstQuestion.id)!;
+  expect(followUp).toMatchObject({ status: "scheduled", targetId: expect.any(String) });
+
+  const overdue = new Date(Date.now() - 65000);
+  await db.update(l2Sessions).set({ questionDeadlineAt: overdue }).where(eq(l2Sessions.attemptId, id));
+  await db.update(deadlineJobs).set({ deadlineAt: overdue }).where(eq(deadlineJobs.id, followUp.id));
+  await runDeadlineJob(followUp.id, scheduler);
+  const [readyAttempt] = await db.select().from(attempts).where(eq(attempts.id, id));
+  const [readySession] = await db.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
+  expect(readyAttempt.currentPosition).toBe(3);
+  expect(readySession.questionDeadlineAt).toBeNull();
+
+  const started = await startPlaybackService(id, readyAttempt.userId, scheduler);
+  expect(started).toEqual({ id });
+  const latestListeningId = scheduler.calls.at(-1)!.deadlineJobId;
+  const [listeningJob] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.id, latestListeningId));
+  await db.update(l2Sessions).set({ listeningDeadlineAt: justExpired }).where(eq(l2Sessions.attemptId, id));
+  await db.update(deadlineJobs).set({ deadlineAt: justExpired }).where(eq(deadlineJobs.id, listeningJob.id));
+  await runDeadlineJob(listeningJob.id, scheduler);
+  const [incident] = await db.select().from(l2Sessions).where(eq(l2Sessions.attemptId, id));
+  expect(incident).toMatchObject({ incidentReason: "audio_stalled", questionDeadlineAt: null });
 });
 
 it("authorizes Blob uploads and validates rights and type without touching Blob on failures", async () => {

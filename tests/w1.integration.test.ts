@@ -3,7 +3,8 @@ import { NextRequest } from "next/server";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { attempts, exerciseRevisions, users } from "@/db/schema";
+import { attempts, deadlineJobs, exerciseRevisions, users } from "@/db/schema";
+import { runDeadlineJob } from "@/features/practice/deadline-runner";
 import type { RevisionInput } from "@/features/editorial/schemas";
 
 const mail = vi.hoisted(() => [] as { url: string }[]);
@@ -107,6 +108,7 @@ it("saves partial ordering with duplicate text, resumes, grades approved variant
   expect((await api(`/attempts/${id}/start`, "POST", stranger)).status).toBe(404);
   expect((await api(`/attempts/${id}/submit`, "POST", learner)).status).toBe(409);
   expect((await api(`/attempts/${id}/start`, "POST", learner)).status).toBe(200);
+  expect((await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id)))[0]).toMatchObject({ kind: "attempt", status: "failed" });
   const ready = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
   expect(ready.deadlineAt).toBeTruthy();
   expect((await api(`/attempts/${id}/start`, "POST", learner)).status).toBe(200);
@@ -146,6 +148,11 @@ it("closes at database deadline preserving responses and rejecting late saves", 
   const before = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
   await api(`/attempts/${id}/items/${before.items[0].id}`, "PUT", learner, { version: 0, response: { tokenIds: ["a", "b", "c"] } });
   await db.update(attempts).set({ deadlineAt: new Date(Date.now() - 1000) }).where(eq(attempts.id, id));
+  const [job] = await db.select().from(deadlineJobs).where(eq(deadlineJobs.attemptId, id));
+  await db.update(deadlineJobs).set({ deadlineAt: new Date(Date.now() - 1000) }).where(eq(deadlineJobs.id, job.id));
+  await runDeadlineJob(job.id);
+  await runDeadlineJob(job.id);
+  expect((await db.select().from(attempts).where(eq(attempts.id, id)))[0].status).toBe("submitted");
   expect((await api(`/attempts/${id}/items/${before.items[1].id}`, "PUT", learner, { version: 0, response: { tokenIds: ["a"] } })).status).toBe(409);
   expect((await (await api(`/attempts/${id}`, "GET", learner)).json()).data).toMatchObject({ status: "submitted", pointsAwarded: 1, pointsPossible: 10 });
 });

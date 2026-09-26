@@ -3,10 +3,12 @@ import { db } from "@/db";
 import { attemptGroups, attemptItems, attempts, exerciseItems, exerciseRevisions, exercises, writingSelfReviews, writingTaskTimes } from "@/db/schema";
 import { contentSchemas, promptSchemas } from "@/features/editorial/schemas";
 import type { Checklist } from "./w2-schemas";
+import { dispatchPendingDeadlines, enqueueDeadline, triggerDeadlineScheduler, type DeadlineScheduler } from "./deadlines";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Failure = { error: string; status: 404 | 409 | 422 };
 const fail = (error: string, status: Failure["status"]): Failure => ({ error, status });
+const mayDispatch = (result: object) => !("error" in result) || (result as Failure).status !== 404;
 export const w2Rules = { version: "W2-1", secondsPerTask: 420, navigation: "bidirectional", rubric: ["task", "organization", "register", "language"] } as const;
 const emptyChecklist = (): Checklist => ({ task: false, organization: false, register: false, language: false });
 
@@ -74,6 +76,8 @@ async function activate(tx: Tx, attempt: typeof attempts.$inferSelect, itemId: s
   await tx.insert(writingTaskTimes).values({ itemId, startedAt: time, deadlineAt: attempt.timerMode === "count_down" ? new Date(time.getTime() + rules.secondsPerTask * 1000) : null }).onConflictDoNothing();
   const [task] = await tx.select().from(writingTaskTimes).where(eq(writingTaskTimes.itemId, itemId));
   await tx.update(attempts).set({ currentPosition: position, deadlineAt: task.deadlineAt }).where(eq(attempts.id, attempt.id));
+  if (task.deadlineAt) await enqueueDeadline(tx, { attemptId: attempt.id, kind: "w2_task", targetId: itemId, deadlineAt: task.deadlineAt });
+  return task;
 }
 
 async function close(tx: Tx, attempt: typeof attempts.$inferSelect, time: Date) {
@@ -87,19 +91,19 @@ async function close(tx: Tx, attempt: typeof attempts.$inferSelect, time: Date) 
 async function reconcile(tx: Tx, attempt: typeof attempts.$inferSelect, time: Date) {
   if (attempt.status !== "in_progress" || !attempt.deadlineAt || time < attempt.deadlineAt) return attempt.status;
   const rows = await items(tx, attempt.id);
-  // On a delayed request, expire every task whose server deadline has passed; never restart a task's clock.
+  // Skip previously activated tasks that also expired while the request or job was delayed.
   for (let index = attempt.currentPosition; index <= rows.length; index++) {
     const next = rows[index];
     if (!next) { await close(tx, attempt, time); return "submitted"; }
-    await activate(tx, attempt, next.id, time, index + 1);
-    return "in_progress";
+    const task = await activate(tx, attempt, next.id, time, index + 1);
+    if (!task.deadlineAt || time < task.deadlineAt) return "in_progress";
   }
   await close(tx, attempt, time);
   return "submitted";
 }
 
-export async function detail(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function detail(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await locked(tx, id, userId);
     if (!attempt) return fail("No encontrado", 404);
     const time = await now(tx);
@@ -122,10 +126,12 @@ export async function detail(id: string, userId: string) {
       ...(status === "submitted" ? { selfReview: { checklist: (review?.checklist ?? emptyChecklist()) as Checklist, version: review?.version ?? 0 } } : {}),
     };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function start(id: string, userId: string) {
-  return db.transaction(async (tx) => {
+export async function start(id: string, userId: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await locked(tx, id, userId);
     if (!attempt) return fail("No encontrado", 404);
     const time = await now(tx);
@@ -137,10 +143,12 @@ export async function start(id: string, userId: string) {
     }
     return { id };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function save(id: string, userId: string, itemId: string, version: number, text: string) {
-  return db.transaction(async (tx) => {
+export async function save(id: string, userId: string, itemId: string, version: number, text: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await locked(tx, id, userId);
     if (!attempt) return fail("No encontrado", 404);
     const time = await now(tx);
@@ -154,10 +162,12 @@ export async function save(id: string, userId: string, itemId: string, version: 
     await tx.update(attemptItems).set({ responseJson: { text }, responseVersion: version + 1, savedAt: time }).where(eq(attemptItems.id, itemId));
     return { version: version + 1, savedAt: time.toISOString() };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
-export async function move(id: string, userId: string, position: number) {
-  return db.transaction(async (tx) => {
+export async function move(id: string, userId: string, position: number, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await locked(tx, id, userId);
     if (!attempt) return fail("No encontrado", 404);
     const time = await now(tx);
@@ -173,6 +183,8 @@ export async function move(id: string, userId: string, position: number) {
     else await tx.update(attempts).set({ currentPosition: position }).where(eq(attempts.id, id));
     return { currentPosition: position };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
 }
 
 export async function submit(id: string, userId: string) {
@@ -185,8 +197,8 @@ export async function submit(id: string, userId: string) {
   });
 }
 
-export async function selfReview(id: string, userId: string, version: number, checklist: Checklist) {
-  return db.transaction(async (tx) => {
+export async function selfReview(id: string, userId: string, version: number, checklist: Checklist, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  const result = await db.transaction(async (tx) => {
     const attempt = await locked(tx, id, userId);
     if (!attempt) return fail("No encontrado", 404);
     if (await reconcile(tx, attempt, await now(tx)) !== "submitted") return fail("Entrega antes de autoevaluarte", 409);
@@ -195,4 +207,15 @@ export async function selfReview(id: string, userId: string, version: number, ch
     await tx.update(writingSelfReviews).set({ checklist, version: version + 1 }).where(eq(writingSelfReviews.attemptId, id));
     return { checklist, version: version + 1 };
   });
+  if (mayDispatch(result)) await dispatchPendingDeadlines(id, scheduler);
+  return result;
+}
+
+export async function reconcileDeadline(id: string, scheduler: DeadlineScheduler = triggerDeadlineScheduler) {
+  await db.transaction(async (tx) => {
+    const [attempt] = await tx.select().from(attempts).where(and(eq(attempts.id, id), eq(attempts.typeCode, "W2"))).for("update");
+    if (!attempt) throw new Error(`W2 attempt ${id} does not exist`);
+    await reconcile(tx, attempt, await now(tx));
+  });
+  await dispatchPendingDeadlines(id, scheduler);
 }

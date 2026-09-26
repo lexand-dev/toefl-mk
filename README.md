@@ -39,11 +39,19 @@ El ejemplo original R3 se muestra como plantilla de **borrador sin revisión hum
 
 Las pruebas de publicación usan PostgreSQL desechable de la misma forma que las de cuenta, incluyendo los triggers de inmutabilidad de las migraciones Drizzle. Ninguna prueba implica que el ejemplo haya recibido revisión lingüística real.
 
+## Vencimientos duraderos (ticket 08)
+
+Los intentos R1, R3 y W1 con cuenta regresiva, cada tarea W2 iniciada y cada fase activa de escucha o pregunta L2 crean una fila duradera en `deadline_jobs`. Después del commit, la aplicación programa un run diferido `practice-deadline` para la hora guardada por PostgreSQL. Cada run usa una clave de idempotencia estable y la tarea tiene reintentos; no hay un cron frecuente. Las peticiones y el job toman el mismo bloqueo del intento y vuelven a conciliar la hora de PostgreSQL antes de guardar o cerrar.
+
+Configura `TRIGGER_PROJECT_REF` y `TRIGGER_SECRET_KEY` tanto en la aplicación como en el entorno correspondiente de Trigger.dev. El entorno de la tarea también necesita `DATABASE_URL`. `trigger.config.ts` apunta a `trigger/`; usa `npx trigger.dev@latest dev` para desarrollo y `npx trigger.dev@latest deploy` para desplegar la tarea con el SDK v4. No ejecutes el CLI sin haber seleccionado el proyecto y entorno correctos.
+
+Si la API de Trigger.dev falla, la operación académica ya confirmada no se revierte: `deadline_jobs.status = 'failed'` conserva el error y el número de intentos. Tras corregir credenciales o disponibilidad, ejecuta en un entorno privado `npm run deadlines:recover`. El comando reconstruye filas que falten para plazos activos y reintenta únicamente programaciones pendientes o fallidas con la misma clave idempotente. No se expone una ruta pública de recuperación.
+
 ## Práctica R3 (ticket 03)
 
 Tras aplicar las migraciones, un alumno verificado abre `/app/practice` para elegir uno o dos pasajes publicados. El resumen separa materiales distintos e ítems evaluables; si faltan materiales, no se crea el intento. La preparación congela revisiones, ítems, orden y reglas (`R3-1`: 15 minutos por pasaje en cuenta regresiva o tiempo ascendente sin vencimiento). El reloj comienza al pulsar «Iniciar práctica» después de recibir los pasajes. Los intentos abiertos aparecen en el selector para reanudar, y el enlace directo permite recuperar posición, respuestas y reloj.
 
-Los cambios de respuesta se confirman en el servidor con versión; las entregas concurrentes comparten una sola corrección. La revisión muestra claves y explicaciones únicamente después del cierre. Los vencimientos se concilian cuando llega una petición; el cierre sin navegador mediante job diferido pertenece al ticket 08. La plantilla R3 sigue siendo un borrador: un editor debe enviarla, otra persona aprobarla tras revisión humana y un administrador publicarla antes de que aparezca en práctica.
+Los cambios de respuesta se confirman en el servidor con versión; las entregas concurrentes comparten una sola corrección. La revisión muestra claves y explicaciones únicamente después del cierre. Los vencimientos se concilian en cada petición y, sin navegador, mediante el job diferido del ticket 08. La plantilla R3 sigue siendo un borrador: un editor debe enviarla, otra persona aprobarla tras revisión humana y un administrador publicarla antes de que aparezca en práctica.
 
 ## Práctica W1 (ticket 05)
 
