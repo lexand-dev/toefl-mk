@@ -2,6 +2,10 @@ import { z } from "zod";
 
 const nonempty = z.string().trim().min(1);
 const option = z.object({ id: nonempty, text: nonempty }).strict();
+const r1Segment = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), text: nonempty }).strict(),
+  z.object({ kind: z.literal("gap"), gapId: nonempty, stem: nonempty }).strict(),
+]);
 const choice = z.object({ question: nonempty, options: z.array(option).min(2) }).strict().refine(
   (value) => new Set(value.options.map((item) => item.id)).size === value.options.length,
   "Los identificadores de opciones deben ser únicos",
@@ -9,14 +13,14 @@ const choice = z.object({ question: nonempty, options: z.array(option).min(2) })
 
 export const typeCode = z.enum(["R1", "R3", "L2", "W1", "W2"]);
 export const contentSchemas = {
-  R1: z.object({ text: nonempty }).strict(),
+  R1: z.object({ title: nonempty, segments: z.array(r1Segment).min(2) }).strict(),
   R3: z.object({ title: nonempty, passage: nonempty }).strict(),
   L2: z.object({ title: nonempty, description: nonempty }).strict(),
   W1: z.object({ context: nonempty }).strict(),
   W2: z.object({ situation: nonempty, recipient: nonempty, task: nonempty }).strict(),
 };
 export const promptSchemas = {
-  R1: z.object({ sentence: nonempty, stem: nonempty }).strict(),
+  R1: z.object({ gapId: nonempty, context: nonempty }).strict(),
   R3: choice,
   L2: choice,
   W1: z.object({ instruction: nonempty, tokens: z.array(option).min(2) }).strict().refine(
@@ -75,6 +79,17 @@ export function validatePublication(type: TypeCode, input: RevisionInput) {
         const tokens = promptSchemas.W1.parse(item.publicPrompt).tokens;
         const sequences = answers.every((answer) => typeof answer === "string") ? [answers] : answers;
         if (!sequences.length || !sequences.every((sequence) => Array.isArray(sequence) && sequence.length === tokens.length && new Set(sequence).size === tokens.length && sequence.every((id) => typeof id === "string" && tokens.some((token) => token.id === id)))) errors.push(`Clave ${item.ordinal} no es una secuencia completa de fichas`);
+      }
+    }
+  }
+  if (type === "R1") {
+    const content = contentSchemas.R1.safeParse(input.publicContent);
+    const prompts = input.items.map((item) => promptSchemas.R1.safeParse(item.publicPrompt));
+    if (content.success && prompts.every((prompt) => prompt.success)) {
+      const gapIds = content.data.segments.filter((segment) => segment.kind === "gap").map((segment) => segment.gapId);
+      const itemGapIds = prompts.map((prompt) => prompt.success ? prompt.data.gapId : "");
+      if (!gapIds.length || new Set(gapIds).size !== gapIds.length || gapIds.length !== itemGapIds.length || gapIds.some((gapId) => !itemGapIds.includes(gapId))) {
+        errors.push("Los huecos R1 deben ser únicos y corresponder exactamente a sus ítems");
       }
     }
   }
