@@ -120,7 +120,7 @@ export function Workbench({ admin, actorId }: { admin: boolean; actorId: string 
     {current && <p>Revisión {current.revision.revisionNumber}: {current.revision.status}. {current.items.length} ítems. {current.revision.reviewedBy ? "Aprobada por una persona distinta del autor." : "Pendiente de aprobación."}</p>}
     {current && <section aria-label="Previsualización editorial"><h2>Previsualización</h2>
       <h3>{String(current.revision.publicContent.title ?? current.exercise.typeCode)}</h3>
-      <p>{previewContent(current.revision.publicContent)}</p>
+      <p style={{ whiteSpace: "pre-wrap" }}>{previewContent(current.revision.publicContent)}</p>
       <ol>{current.items.map((item) => <li key={item.ordinal}><p>{item.publicPrompt.question ?? item.publicPrompt.instruction ?? item.publicPrompt.sentence ?? (item.publicPrompt.gapId ? `Hueco ${item.publicPrompt.gapId}` : "")}</p><ul>{item.publicPrompt.options?.map((option) => <li key={option.id}>{option.id}: {option.text}</li>)}</ul><p>Clave privada: {JSON.stringify(item.key?.acceptedAnswers ?? null)}. {item.key?.explanation}</p></li>)}</ol>
       <ul>{current.assets.map((asset) => <li key={asset.storageKey}>{asset.role}: {asset.kind} — {asset.storageKey}{asset.kind === "audio" && /^https:\/\//.test(asset.storageKey) && <audio controls src={asset.storageKey} />}{asset.kind === "image" && /^https:\/\//.test(asset.storageKey) && <a href={asset.storageKey}>Abrir imagen</a>}</li>)}</ul>
     </section>}

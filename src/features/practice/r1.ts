@@ -25,12 +25,18 @@ async function candidates(connection: Connection) {
     .where(and(eq(exercises.typeCode, "R1"), eq(exerciseRevisions.status, "published")))
     .orderBy(desc(exerciseRevisions.revisionNumber), asc(exercises.id));
   if (!rows.length) return [];
-  const itemRows = await connection.select({ revisionId: exerciseItems.revisionId, prompt: exerciseItems.publicPrompt })
+  const itemRows = await connection.select({ id: exerciseItems.id, revisionId: exerciseItems.revisionId, prompt: exerciseItems.publicPrompt, responseKind: exerciseItems.responseKind, pointsPossible: exerciseItems.pointsPossible })
     .from(exerciseItems).where(inArray(exerciseItems.revisionId, rows.map((row) => row.id)));
+  const keys = await connection.select().from(answerKeys).where(inArray(answerKeys.itemId, itemRows.map((item) => item.id)));
   const valid = rows.filter((row) => {
     const content = contentSchemas.R1.safeParse(row.content);
-    const prompts = itemRows.filter((item) => item.revisionId === row.id).map((item) => promptSchemas.R1.safeParse(item.prompt));
+    const revisionItems = itemRows.filter((item) => item.revisionId === row.id);
+    const prompts = revisionItems.map((item) => promptSchemas.R1.safeParse(item.prompt));
     if (!content.success || !prompts.length || prompts.some((prompt) => !prompt.success)) return false;
+    if (revisionItems.some((item) => {
+      const key = keys.find((candidate) => candidate.itemId === item.id && candidate.revisionId === row.id);
+      return item.responseKind !== "fill_word" || Number(item.pointsPossible) !== 1 || !key || !acceptedAnswersValid(key.acceptedAnswers) || !key.explanation.trim();
+    })) return false;
     const gapIds = content.data.segments.filter((segment) => segment.kind === "gap").map((segment) => segment.gapId);
     const promptIds = prompts.map((prompt) => prompt.success ? prompt.data.gapId : "");
     return gapIds.length === promptIds.length && new Set(gapIds).size === gapIds.length && gapIds.every((gapId) => promptIds.includes(gapId));
@@ -77,8 +83,12 @@ async function locked(tx: Tx, id: string, userId: string) {
 }
 
 function acceptedAnswers(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.length || !value.every((answer) => typeof answer === "string")) throw new Error("Clave R1 inválida");
+  if (!acceptedAnswersValid(value)) throw new Error("Clave R1 inválida");
   return value;
+}
+
+function acceptedAnswersValid(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((answer) => typeof answer === "string" && answer.trim().length > 0);
 }
 
 function isCorrect(response: string, accepted: string[], scoringRule: string) {
@@ -97,10 +107,11 @@ async function close(tx: Tx, attempt: typeof attempts.$inferSelect, time: Date) 
     const key = keys.find((value) => value.itemId === row.itemId && value.revisionId === row.revisionId);
     if (!key) throw new Error("Falta clave para un hueco publicado");
     const suffix = (row.response as { suffix?: string } | null)?.suffix ?? "";
-    const correct = suffix.length > 0 && isCorrect(suffix, acceptedAnswers(key.acceptedAnswers), key.scoringRule);
+    const answered = suffix.trim().length > 0;
+    const correct = answered && isCorrect(suffix, acceptedAnswers(key.acceptedAnswers), key.scoringRule);
     possible += Number(row.pointsPossible);
     if (correct) awarded += Number(row.pointsPossible);
-    await tx.update(attemptItems).set({ outcome: !suffix ? "omitted" : correct ? "correct" : "incorrect", pointsAwarded: correct ? row.pointsPossible : "0" }).where(eq(attemptItems.id, row.id));
+    await tx.update(attemptItems).set({ outcome: !answered ? "omitted" : correct ? "correct" : "incorrect", pointsAwarded: correct ? row.pointsPossible : "0" }).where(eq(attemptItems.id, row.id));
   }
   await tx.update(attempts).set({ status: "submitted", submittedAt: time, pointsAwarded: String(awarded), pointsPossible: String(possible) }).where(eq(attempts.id, attempt.id));
 }

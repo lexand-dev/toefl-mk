@@ -32,6 +32,7 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onState, 
   const saved = useRef(suffix);
   const version = useRef(item.version);
   const flight = useRef<Promise<void> | null>(null);
+  const [conflict, setConflict] = useState<{ suffix: string; version: number } | null>(null);
 
   async function persist() {
     if (flight.current) return;
@@ -39,13 +40,17 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onState, 
     setState("saving");
     flight.current = (async () => {
       try {
-        while (saved.current !== desired.current) {
-          const value = desired.current;
-          const result = await dataOrThrow<{ version: number }>(await r1Client.api.practice.r1.attempts[":id"].items[":itemId"].$put({ param: { id: attemptId, itemId: item.id }, json: { version: version.current, response: { suffix: value } } }));
-          version.current = result.version;
-          saved.current = value;
+        while (true) {
+          while (saved.current !== desired.current) {
+            const value = desired.current;
+            const result = await dataOrThrow<{ version: number }>(await r1Client.api.practice.r1.attempts[":id"].items[":itemId"].$put({ param: { id: attemptId, itemId: item.id }, json: { version: version.current, response: { suffix: value } } }));
+            version.current = result.version;
+            saved.current = value;
+          }
+          await onRefresh();
+          if (saved.current === desired.current) break;
         }
-        await onRefresh();
+        setConflict(null);
         setState("saved");
         onState("saved");
       } catch {
@@ -53,14 +58,24 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onState, 
           const latest = await onRefresh();
           const serverItem = latest.items.find((candidate) => candidate.id === item.id);
           if (serverItem) {
-            version.current = serverItem.version;
-            saved.current = serverItem.response?.suffix ?? "";
+            const serverSuffix = serverItem.response?.suffix ?? "";
             if (latest.status === "submitted") {
-              desired.current = saved.current;
-              setSuffix(saved.current);
+              version.current = serverItem.version;
+              saved.current = serverSuffix;
+              desired.current = serverSuffix;
+              setSuffix(serverSuffix);
               setState("saved");
               onState("saved");
               return;
+            }
+            if (serverItem.version !== version.current) {
+              if (serverSuffix === desired.current) {
+                version.current = serverItem.version;
+                saved.current = serverSuffix;
+                setState("saved"); onState("saved");
+                return;
+              }
+              setConflict({ suffix: serverSuffix, version: serverItem.version });
             }
           }
         } catch { /* Keep the local edit available for a later retry. */ }
@@ -74,8 +89,8 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onState, 
 
   return <span className="r1-gap"><label className="sr-only" htmlFor={`gap-${item.id}`}>Hueco {item.position} después de {stem}</label>
     <input id={`gap-${item.id}`} value={suffix} maxLength={100} size={Math.max(4, suffix.length + 1)} disabled={disabled} aria-current={active ? "true" : undefined} aria-label={`Completar hueco ${item.position} después de ${stem}`} onFocus={onSelect} onChange={(event) => { const value = event.target.value; desired.current = value; setSuffix(value); void persist(); }} />
-    <span role="status" className={state === "error" ? "error" : "sr-only"}>{state === "saving" ? "Guardando" : state === "error" ? "No se pudo guardar." : "Guardado"}</span>
-    {state === "error" && !disabled && <button type="button" onClick={() => void persist()}>Reintentar guardado</button>}
+    <span role="status" className={state === "error" ? "error" : "sr-only"}>{state === "saving" ? "Guardando" : state === "error" ? conflict ? "La respuesta cambió en otra sesión." : "No se pudo guardar." : "Guardado"}</span>
+    {state === "error" && !disabled && (conflict ? <button type="button" onClick={() => { version.current = conflict.version; saved.current = conflict.suffix; desired.current = conflict.suffix; setSuffix(conflict.suffix); setConflict(null); setState("saved"); onState("saved"); }}>Usar respuesta guardada</button> : <button type="button" onClick={() => void persist()}>Reintentar guardado</button>)}
     {disabled && "outcome" in item && <small>{item.outcome === "correct" ? " Correcto." : item.outcome === "omitted" ? " Omitido." : " Incorrecto."} Solución: {stem}{item.acceptedSuffixes?.[0]}. {item.explanation}</small>}
   </span>;
 }
@@ -98,7 +113,7 @@ function Activity({ id }: { id: string }) {
   const currentItem = current.items[current.currentPosition - 1];
   const group = current.groups.find((value) => value.id === currentItem.groupId)!;
   const groupItems = current.items.filter((item) => item.groupId === group.id);
-  const omissions = current.items.filter((item) => !item.response?.suffix).length;
+  const omissions = current.items.filter((item) => !item.response?.suffix.trim()).length;
   const busy = start.isPending || move.isPending || submit.isPending || pendingItems.size > 0;
   const setItemState = (itemId: string, state: "saved" | "saving" | "error") => setPendingItems((previous) => { const next = new Set(previous); if (state === "saved") next.delete(itemId); else next.add(itemId); return next; });
   async function selectPosition(position: number) {
@@ -121,7 +136,7 @@ function Activity({ id }: { id: string }) {
       <section aria-label={`Texto ${group.ordinal}`} className="r1-text">{group.content.segments.map((segment, index) => {
         if (segment.kind === "text") return <span key={`text-${index}`}>{segment.text}</span>;
         const item = groupItems.find((candidate) => candidate.prompt.gapId === segment.gapId)!;
-        return <span key={segment.gapId}>{segment.stem}<GapField attemptId={id} item={item} stem={segment.stem} active={item.position === current.currentPosition} disabled={current.status === "submitted"} onSelect={() => { if (item.position !== current.currentPosition) void selectPosition(item.position).catch(() => undefined); }} onState={(state) => setItemState(item.id, state)} onRefresh={async () => { const latest = await refreshAttempt(); cache.setQueryData(["r1-attempt", id], latest); return latest; }} /></span>;
+        return <span key={segment.gapId}>{segment.stem}<GapField attemptId={id} item={item} stem={segment.stem} active={item.position === current.currentPosition} disabled={current.status === "submitted"} onSelect={() => { void selectPosition(item.position).catch(() => undefined); }} onState={(state) => setItemState(item.id, state)} onRefresh={async () => { const latest = await refreshAttempt(); cache.setQueryData(["r1-attempt", id], latest); return latest; }} /></span>;
       })}</section>
       {current.status === "submitted" && group.result && <p>Resultado del texto: {group.result.pointsAwarded} / {group.result.pointsPossible}; {group.result.omissions} omisiones.</p>}
       <nav><button disabled={busy || current.currentPosition === 1} onClick={() => move.mutate(current.currentPosition - 1)}>Anterior</button><button disabled={busy || current.currentPosition === current.itemCount} onClick={() => move.mutate(current.currentPosition + 1)}>Siguiente</button></nav>

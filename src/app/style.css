@@ -22,7 +22,7 @@ select { font: inherit; padding: .65rem; border: 1px solid #6d7e8d; border-radiu
 .w1-placed li span { margin-right: .5rem; }
 .w2-editor textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .65rem; border: 1px solid #6d7e8d; border-radius: .25rem; }
 .r1-text { display: block; white-space: pre-wrap; line-height: 2.5; }
-.r1-gap { display: inline-flex; align-items: baseline; gap: .25rem; margin: 0 .2rem; }
+.r1-gap { display: inline-flex; align-items: baseline; gap: .25rem; }
 .r1-gap input { min-width: 4rem; }
 .r1-gap input[aria-current="true"] { outline: 3px solid #c56a11; outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

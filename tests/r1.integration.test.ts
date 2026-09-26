@@ -125,8 +125,9 @@ it("includes empty gaps in the denominator and blocks writes after the database 
   await api(`/attempts/${id}/start`, "POST", learner);
   const ready = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
   await api(`/attempts/${id}/items/${ready.items[0].id}`, "PUT", learner, { version: 0, response: { suffix: "igation" } });
+  expect((await api(`/attempts/${id}/items/${ready.items[1].id}`, "PUT", learner, { version: 0, response: { suffix: "   " } })).status).toBe(200);
   await db.update(attempts).set({ deadlineAt: new Date(Date.now() - 1000) }).where(eq(attempts.id, id));
-  expect((await api(`/attempts/${id}/items/${ready.items[1].id}`, "PUT", learner, { version: 0, response: { suffix: "nals" } })).status).toBe(409);
+  expect((await api(`/attempts/${id}/items/${ready.items[1].id}`, "PUT", learner, { version: 1, response: { suffix: "nals" } })).status).toBe(409);
   const review = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
   expect(review).toMatchObject({ status: "submitted", pointsAwarded: 1, pointsPossible: 2 });
   expect(review.groups[0].result).toEqual({ pointsAwarded: 1, pointsPossible: 2, omissions: 1 });
