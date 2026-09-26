@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] El texto usa autoguardado con debounce, estados de sincronización y confirmación antes de navegar o entregar.
 - [ ] Un cambio antiguo no sobrescribe el borrador más reciente; el tiempo no se restablece tras recarga.
