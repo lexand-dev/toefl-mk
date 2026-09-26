@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo; 07 Práctica L2 con audio e incidencias.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Un job diferido se programa para los vencimientos activos; una falla de programación tiene recuperación explícita.
 - [ ] Toda petición comprueba la hora del servidor y concilia plazos pendientes, incluso si el job se retrasa.
