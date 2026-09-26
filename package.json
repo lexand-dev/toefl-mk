@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "beta:import": "tsx scripts/import-beta-drafts.ts",
     "deadlines:recover": "tsx scripts/recover-deadlines.ts",
     "test": "vitest run"
   },
