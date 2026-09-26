@@ -1,6 +1,6 @@
 {
-  "id": "5a56d121-0aa3-4331-999a-ae40db89aa28",
-  "prevId": "d8442a2e-057d-42cb-8653-171a896b2384",
+  "id": "daca79fe-7842-4ec7-a893-39ce294b4bac",
+  "prevId": "5a56d121-0aa3-4331-999a-ae40db89aa28",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1102,6 +1102,87 @@
         "exercise_difficulty_check": {
           "name": "exercise_difficulty_check",
           "value": "\"exercises\".\"difficulty\" IN ('intro', 'intermediate', 'advanced')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.l2_sessions": {
+      "name": "l2_sessions",
+      "schema": "",
+      "columns": {
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "playback_started_at": {
+          "name": "playback_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "listening_deadline_at": {
+          "name": "listening_deadline_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response_started_at": {
+          "name": "response_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "question_deadline_at": {
+          "name": "question_deadline_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "incident_at": {
+          "name": "incident_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "incident_reason": {
+          "name": "incident_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "incident_count": {
+          "name": "incident_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "l2_sessions_attempt_id_attempts_id_fk": {
+          "name": "l2_sessions_attempt_id_attempts_id_fk",
+          "tableFrom": "l2_sessions",
+          "tableTo": "attempts",
+          "columnsFrom": [
+            "attempt_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "l2_incident_count_nonnegative": {
+          "name": "l2_incident_count_nonnegative",
+          "value": "\"l2_sessions\".\"incident_count\" >= 0"
         }
       },
       "isRLSEnabled": false

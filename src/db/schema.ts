@@ -233,3 +233,14 @@ export const writingSelfReviews = pgTable("writing_self_reviews", {
   checklist: jsonb("checklist").notNull(),
   version: integer("version").notNull().default(0),
 }, (t) => [check("writing_self_review_version_nonnegative", sql`${t.version} >= 0`)]);
+
+export const l2Sessions = pgTable("l2_sessions", {
+  attemptId: uuid("attempt_id").primaryKey().references(() => attempts.id, { onDelete: "restrict" }),
+  playbackStartedAt: timestamp("playback_started_at", { withTimezone: true }),
+  listeningDeadlineAt: timestamp("listening_deadline_at", { withTimezone: true }),
+  responseStartedAt: timestamp("response_started_at", { withTimezone: true }),
+  questionDeadlineAt: timestamp("question_deadline_at", { withTimezone: true }),
+  incidentAt: timestamp("incident_at", { withTimezone: true }),
+  incidentReason: text("incident_reason"),
+  incidentCount: integer("incident_count").notNull().default(0),
+}, (t) => [check("l2_incident_count_nonnegative", sql`${t.incidentCount} >= 0`)]);

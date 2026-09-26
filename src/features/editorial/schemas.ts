@@ -78,7 +78,7 @@ export function validatePublication(type: TypeCode, input: RevisionInput) {
       }
     }
   }
-  if (type === "L2" && !input.assets.some((asset) => asset.kind === "audio" && asset.role === "stimulus")) errors.push("Falta audio L2");
+  if (type === "L2" && (input.assets.filter((asset) => asset.role === "stimulus").length !== 1 || !input.assets.some((asset) => asset.kind === "audio" && asset.role === "stimulus" && (asset.mimeType === "audio/mpeg" || asset.mimeType === "audio/mp4") && new RegExp(`^https://[a-z0-9-]+\\.public\\.blob\\.vercel-storage\\.com/l2/[a-f0-9-]{36}/${asset.sha256Hex}\\.${asset.mimeType === "audio/mpeg" ? "mp3" : "mp4"}$`).test(asset.storageKey)))) errors.push("Falta audio L2: se requiere exactamente un audio público versionado de Vercel Blob por conversación");
   if (type === "L2" && (typeof input.reviewContent?.transcript !== "string" || !input.reviewContent.transcript.trim())) errors.push("Falta transcripción L2");
   return errors;
 }

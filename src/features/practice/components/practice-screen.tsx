@@ -15,7 +15,7 @@ function Selector() {
   }>(await practice.api.practice.r3.summary.$get({ query: { groups: String(groups) } })) });
   const open = useQuery({ queryKey: ["r3-open"], queryFn: async () => dataOrThrow<{ id: string; status: string }[]>(await practice.api.practice.attempts.$get()) });
   const create = useMutation({ mutationFn: async () => dataOrThrow<{ id: string }>(await practice.api.practice.attempts.$post({ json: { typeCode: "R3", groups, timerMode } })), onSuccess: (result) => router.push(`/app/practice/${result.id}`) });
-  return <article><h1>Lectura académica R3</h1><p>Selecciona un lote de pasajes publicados.</p>
+  return <article><h1>Lectura académica R3</h1><p><Link href="/app/practice/l2">Practicar conversaciones L2</Link></p><p>Selecciona un lote de pasajes publicados.</p>
     <label>Materiales<select value={groups} onChange={(event) => setGroups(Number(event.target.value) as 1 | 2)}><option value="1">1 pasaje</option><option value="2">2 pasajes</option></select></label>
     <label>Reloj<select value={timerMode} onChange={(event) => setTimerMode(event.target.value as "count_up" | "count_down")}><option value="count_down">Cuenta regresiva</option><option value="count_up">Tiempo transcurrido</option></select></label>
     {summary.isPending ? <p>Consultando disponibilidad…</p> : summary.isError ? <p className="error">{summary.error.message}</p> : <p>{summary.data.materialCount} materiales distintos · {summary.data.itemCount} preguntas evaluables. {summary.data.shortage > 0 && `Faltan ${summary.data.shortage} materiales publicados; reduce el lote.`} {timerMode === "count_down" && `${summary.data.rules.secondsPerGroup / 60} minutos por pasaje.`}</p>}
