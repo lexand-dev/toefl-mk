@@ -60,7 +60,7 @@ export async function createAttempt(userId: string, groups: 1 | 2, timerMode: "c
 }
 
 async function lockedAttempt(tx: Tx, id: string, userId: string) {
-  const [attempt] = await tx.select().from(attempts).where(and(eq(attempts.id, id), eq(attempts.userId, userId))).for("update");
+  const [attempt] = await tx.select().from(attempts).where(and(eq(attempts.id, id), eq(attempts.userId, userId), eq(attempts.typeCode, "R3"))).for("update");
   return attempt;
 }
 
