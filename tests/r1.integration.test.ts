@@ -20,13 +20,13 @@ const ed = (path: string, method = "GET", cookie?: string, data?: unknown) => ca
 const api = (path: string, method = "GET", cookie?: string, data?: unknown) => call(r1, "practice/r1", path, method, cookie, data);
 const fixture: RevisionInput = {
   publicContent: { title: "Signals in migration", segments: [
-    { kind: "text", text: "Migratory birds " }, { kind: "gap", gapId: "navigation", stem: "nav" },
-    { kind: "text", text: " by combining visual " }, { kind: "gap", gapId: "signals", stem: "sig" }, { kind: "text", text: "." },
+    { kind: "text", text: "Migratory birds " }, { kind: "gap", gapId: "gap-1", stem: "nav" },
+    { kind: "text", text: " by combining visual " }, { kind: "gap", gapId: "gap-2", stem: "sig" }, { kind: "text", text: "." },
   ] },
   provenanceNote: "Original test paragraph", rightsNote: "Original test content", assets: [], reviewContent: null,
   items: [
-    { ordinal: 1, responseKind: "fill_word", publicPrompt: { gapId: "navigation", context: "navigation" }, pointsPossible: 1, key: { acceptedAnswers: ["igation"], scoringRule: "exact", explanation: "The noun completes the idea of finding a route." } },
-    { ordinal: 2, responseKind: "fill_word", publicPrompt: { gapId: "signals", context: "signals" }, pointsPossible: 1, key: { acceptedAnswers: ["nals"], scoringRule: "case_insensitive", explanation: "The plural noun follows visual." } },
+    { ordinal: 1, responseKind: "fill_word", publicPrompt: { gapId: "gap-1" }, pointsPossible: 1, key: { acceptedAnswers: ["igation"], scoringRule: "exact", explanation: "The noun completes the idea of finding a route." } },
+    { ordinal: 2, responseKind: "fill_word", publicPrompt: { gapId: "gap-2" }, pointsPossible: 1, key: { acceptedAnswers: ["nals"], scoringRule: "case_insensitive", explanation: "The plural noun follows visual." } },
   ],
 };
 
@@ -58,6 +58,9 @@ it("requires unique public gap segments that correspond exactly to private-key i
   const created = await ed("/", "POST", author, { typeCode: "R1", topic: "Migration", difficulty: "intro", revision: bad });
   const id = (await created.json()).data.id;
   expect((await ed(`/${id}/submit`, "POST", author)).status).toBe(422);
+  const weighted = { ...fixture, items: fixture.items.map((item, index) => index === 0 ? { ...item, pointsPossible: 2 } : item) };
+  expect((await ed(`/${id}`, "PUT", author, weighted)).status).toBe(200);
+  expect((await ed(`/${id}/submit`, "POST", author)).status).toBe(422);
   expect((await ed(`/${id}`, "PUT", author, fixture)).status).toBe(200);
   expect((await ed(`/${id}/submit`, "POST", author)).status).toBe(200);
 });
@@ -77,6 +80,7 @@ it("selects one or two distinct texts, reports real gap counts and withholds sol
   const id = (await created.json()).data.id;
   const detail = (await (await api(`/attempts/${id}`, "GET", learner)).json()).data;
   expect(detail).toMatchObject({ status: "prepared", materialCount: 2, itemCount: 4 });
+  expect(detail.groups[0].content.segments[0].text).toBe("Migratory birds ");
   expect(JSON.stringify(detail)).not.toMatch(/acceptedSuffixes|The noun completes|The plural noun follows/);
 });
 

@@ -1,10 +1,12 @@
 import { z } from "zod";
 
 const nonempty = z.string().trim().min(1);
+const visibleText = z.string().min(1).refine((value) => value.trim().length > 0);
+const r1GapId = z.string().regex(/^gap-[1-9]\d*$/, "El identificador del hueco debe ser opaco (gap-N)");
 const option = z.object({ id: nonempty, text: nonempty }).strict();
 const r1Segment = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("text"), text: nonempty }).strict(),
-  z.object({ kind: z.literal("gap"), gapId: nonempty, stem: nonempty }).strict(),
+  z.object({ kind: z.literal("text"), text: visibleText }).strict(),
+  z.object({ kind: z.literal("gap"), gapId: r1GapId, stem: nonempty }).strict(),
 ]);
 const choice = z.object({ question: nonempty, options: z.array(option).min(2) }).strict().refine(
   (value) => new Set(value.options.map((item) => item.id)).size === value.options.length,
@@ -20,7 +22,7 @@ export const contentSchemas = {
   W2: z.object({ situation: nonempty, recipient: nonempty, task: nonempty }).strict(),
 };
 export const promptSchemas = {
-  R1: z.object({ gapId: nonempty, context: nonempty }).strict(),
+  R1: z.object({ gapId: r1GapId }).strict(),
   R3: choice,
   L2: choice,
   W1: z.object({ instruction: nonempty, tokens: z.array(option).min(2) }).strict().refine(
@@ -65,7 +67,7 @@ export function validatePublication(type: TypeCode, input: RevisionInput) {
   for (const item of input.items) {
     const parsed = promptSchemas[type].safeParse(item.publicPrompt);
     if (!parsed.success) errors.push(`Consigna ${item.ordinal} inválida`);
-    if (item.responseKind !== expected || (type === "W2" ? item.pointsPossible !== 0 || item.key !== null : item.pointsPossible <= 0 || item.key === null)) {
+    if (item.responseKind !== expected || (type === "W2" ? item.pointsPossible !== 0 || item.key !== null : item.pointsPossible <= 0 || item.key === null) || (type === "R1" && item.pointsPossible !== 1)) {
       errors.push(`Ítem ${item.ordinal}: tipo, puntos o clave inválidos`);
     }
     const answers = item.key?.acceptedAnswers;

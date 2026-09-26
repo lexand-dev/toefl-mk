@@ -25,7 +25,7 @@ function Clock({ attempt }: { attempt: Attempt }) {
   return <p role="timer">{attempt.timerMode === "count_down" ? "Restante" : "Transcurrido"}: {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</p>;
 }
 
-function GapField({ attemptId, item, stem, active, disabled, onSelect, onBusy }: { attemptId: string; item: Item; stem: string; active: boolean; disabled: boolean; onSelect: () => void; onBusy: (busy: boolean) => void }) {
+function GapField({ attemptId, item, stem, active, disabled, onSelect, onState, onRefresh }: { attemptId: string; item: Item; stem: string; active: boolean; disabled: boolean; onSelect: () => void; onState: (state: "saved" | "saving" | "error") => void; onRefresh: () => Promise<Attempt> }) {
   const [suffix, setSuffix] = useState(item.response?.suffix ?? "");
   const [state, setState] = useState<"saved" | "saving" | "error">("saved");
   const desired = useRef(suffix);
@@ -35,7 +35,7 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onBusy }:
 
   async function persist() {
     if (flight.current) return;
-    onBusy(true);
+    onState("saving");
     setState("saving");
     flight.current = (async () => {
       try {
@@ -45,32 +45,53 @@ function GapField({ attemptId, item, stem, active, disabled, onSelect, onBusy }:
           version.current = result.version;
           saved.current = value;
         }
+        await onRefresh();
         setState("saved");
+        onState("saved");
       } catch {
-        setState("error");
+        try {
+          const latest = await onRefresh();
+          const serverItem = latest.items.find((candidate) => candidate.id === item.id);
+          if (serverItem) {
+            version.current = serverItem.version;
+            saved.current = serverItem.response?.suffix ?? "";
+            if (latest.status === "submitted") {
+              desired.current = saved.current;
+              setSuffix(saved.current);
+              setState("saved");
+              onState("saved");
+              return;
+            }
+          }
+        } catch { /* Keep the local edit available for a later retry. */ }
+        setState("error"); onState("error");
       } finally {
         flight.current = null;
-        onBusy(false);
       }
     })();
     await flight.current;
   }
 
-  return <span className="r1-gap"><label className="sr-only" htmlFor={`gap-${item.id}`}>Hueco {item.position}: {item.prompt.context}</label>
+  return <span className="r1-gap"><label className="sr-only" htmlFor={`gap-${item.id}`}>Hueco {item.position} después de {stem}</label>
     <input id={`gap-${item.id}`} value={suffix} maxLength={100} size={Math.max(4, suffix.length + 1)} disabled={disabled} aria-current={active ? "true" : undefined} aria-label={`Completar hueco ${item.position} después de ${stem}`} onFocus={onSelect} onChange={(event) => { const value = event.target.value; desired.current = value; setSuffix(value); void persist(); }} />
-    <span role="status" className="sr-only">{state === "saving" ? "Guardando" : state === "error" ? "No guardado" : "Guardado"}</span>
+    <span role="status" className={state === "error" ? "error" : "sr-only"}>{state === "saving" ? "Guardando" : state === "error" ? "No se pudo guardar." : "Guardado"}</span>
+    {state === "error" && !disabled && <button type="button" onClick={() => void persist()}>Reintentar guardado</button>}
     {disabled && "outcome" in item && <small>{item.outcome === "correct" ? " Correcto." : item.outcome === "omitted" ? " Omitido." : " Incorrecto."} Solución: {stem}{item.acceptedSuffixes?.[0]}. {item.explanation}</small>}
   </span>;
 }
 
 function Activity({ id }: { id: string }) {
   const cache = useQueryClient();
-  const [busyItems, setBusyItems] = useState<Set<string>>(() => new Set());
+  const [pendingItems, setPendingItems] = useState<Set<string>>(() => new Set());
+  const requestedPosition = useRef<number | null>(null);
+  const selectingPosition = useRef(false);
   const attempt = useQuery({ queryKey: ["r1-attempt", id], queryFn: async () => dataOrThrow<Attempt>(await r1Client.api.practice.r1.attempts[":id"].$get({ param: { id } })), refetchInterval: 10000 });
   const refresh = () => cache.invalidateQueries({ queryKey: ["r1-attempt", id] });
+  const refreshAttempt = async () => dataOrThrow<Attempt>(await r1Client.api.practice.r1.attempts[":id"].$get({ param: { id } }));
   const start = useMutation({ mutationFn: async () => dataOrThrow(await r1Client.api.practice.r1.attempts[":id"].start.$post({ param: { id } })), onSuccess: refresh });
   const move = useMutation({ mutationFn: async (position: number) => dataOrThrow(await r1Client.api.practice.r1.attempts[":id"].position.$put({ param: { id }, json: { position } })), onSuccess: refresh });
   const submit = useMutation({ mutationFn: async () => dataOrThrow(await r1Client.api.practice.r1.attempts[":id"].submit.$post({ param: { id } })), onSuccess: refresh });
+  useEffect(() => { if (attempt.data?.status === "submitted") setPendingItems(new Set()); }, [attempt.data?.status]);
   if (attempt.isPending) return <p>Cargando intento…</p>;
   if (attempt.isError) return <p className="error" role="alert">{attempt.error.message}</p>;
   const current = attempt.data;
@@ -78,19 +99,33 @@ function Activity({ id }: { id: string }) {
   const group = current.groups.find((value) => value.id === currentItem.groupId)!;
   const groupItems = current.items.filter((item) => item.groupId === group.id);
   const omissions = current.items.filter((item) => !item.response?.suffix).length;
-  const busy = start.isPending || move.isPending || submit.isPending || busyItems.size > 0;
-  const setItemBusy = (itemId: string, value: boolean) => setBusyItems((previous) => { const next = new Set(previous); if (value) next.add(itemId); else next.delete(itemId); return next; });
+  const busy = start.isPending || move.isPending || submit.isPending || pendingItems.size > 0;
+  const setItemState = (itemId: string, state: "saved" | "saving" | "error") => setPendingItems((previous) => { const next = new Set(previous); if (state === "saved") next.delete(itemId); else next.add(itemId); return next; });
+  async function selectPosition(position: number) {
+    requestedPosition.current = position;
+    if (selectingPosition.current) return;
+    selectingPosition.current = true;
+    try {
+      while (requestedPosition.current !== null) {
+        const next = requestedPosition.current;
+        requestedPosition.current = null;
+        await move.mutateAsync(next);
+      }
+    } finally {
+      selectingPosition.current = false;
+    }
+  }
   return <article>{current.status === "in_progress" && <VisibleActivity id={id} />}<h1>Completar palabras R1</h1><Clock attempt={current} />
     {current.status === "prepared" ? <><p>{current.materialCount} materiales · {current.itemCount} huecos. Revisa el lote antes de iniciar el reloj.</p><button disabled={start.isPending} onClick={() => start.mutate()}>Iniciar práctica</button></> : <>
       <h2>{group.content.title}</h2><p>Texto {group.ordinal} de {current.materialCount} · hueco {current.currentPosition} de {current.itemCount}</p>
       <section aria-label={`Texto ${group.ordinal}`} className="r1-text">{group.content.segments.map((segment, index) => {
         if (segment.kind === "text") return <span key={`text-${index}`}>{segment.text}</span>;
         const item = groupItems.find((candidate) => candidate.prompt.gapId === segment.gapId)!;
-        return <span key={segment.gapId}>{segment.stem}<GapField attemptId={id} item={item} stem={segment.stem} active={item.position === current.currentPosition} disabled={current.status === "submitted"} onSelect={() => { if (item.position !== current.currentPosition && !move.isPending) move.mutate(item.position); }} onBusy={(value) => setItemBusy(item.id, value)} /></span>;
+        return <span key={segment.gapId}>{segment.stem}<GapField attemptId={id} item={item} stem={segment.stem} active={item.position === current.currentPosition} disabled={current.status === "submitted"} onSelect={() => { if (item.position !== current.currentPosition) void selectPosition(item.position).catch(() => undefined); }} onState={(state) => setItemState(item.id, state)} onRefresh={async () => { const latest = await refreshAttempt(); cache.setQueryData(["r1-attempt", id], latest); return latest; }} /></span>;
       })}</section>
       {current.status === "submitted" && group.result && <p>Resultado del texto: {group.result.pointsAwarded} / {group.result.pointsPossible}; {group.result.omissions} omisiones.</p>}
       <nav><button disabled={busy || current.currentPosition === 1} onClick={() => move.mutate(current.currentPosition - 1)}>Anterior</button><button disabled={busy || current.currentPosition === current.itemCount} onClick={() => move.mutate(current.currentPosition + 1)}>Siguiente</button></nav>
-      {current.status === "in_progress" && <><p>{omissions} huecos vacíos de {current.itemCount}. {busyItems.size > 0 ? "Guardando cambios…" : "Todos los cambios están guardados."}</p><button disabled={busy} onClick={() => { if (window.confirm(`Hay ${omissions} huecos vacíos. ¿Entregar ahora?`)) submit.mutate(); }}>Entregar</button></>}
+      {current.status === "in_progress" && <><p>{omissions} huecos vacíos de {current.itemCount}. {pendingItems.size > 0 ? "Hay cambios pendientes o con error; corrígelos antes de entregar." : "Todos los cambios están guardados."}</p><button disabled={busy} onClick={() => { if (window.confirm(`Hay ${omissions} huecos vacíos. ¿Entregar ahora?`)) submit.mutate(); }}>Entregar</button></>}
       {current.status === "submitted" && <p>Entregado · {current.pointsAwarded} / {current.pointsPossible} puntos (omisiones incluidas).</p>}
     </>}
     {[start.error, move.error, submit.error].filter(Boolean).map((error, index) => <p key={index} className="error" role="alert">{error!.message} Recarga para recuperar la última versión guardada.</p>)}

@@ -20,15 +20,23 @@ async function now(connection: Connection) {
 }
 
 async function candidates(connection: Connection) {
-  const rows = await connection.select({ id: exerciseRevisions.id, exerciseId: exercises.id, revisionNumber: exerciseRevisions.revisionNumber })
+  const rows = await connection.select({ id: exerciseRevisions.id, exerciseId: exercises.id, revisionNumber: exerciseRevisions.revisionNumber, content: exerciseRevisions.publicContent })
     .from(exerciseRevisions).innerJoin(exercises, eq(exercises.id, exerciseRevisions.exerciseId))
     .where(and(eq(exercises.typeCode, "R1"), eq(exerciseRevisions.status, "published")))
     .orderBy(desc(exerciseRevisions.revisionNumber), asc(exercises.id));
-  const latest = [...new Map([...rows].reverse().map((row) => [row.exerciseId, row])).values()].sort((a, b) => a.exerciseId.localeCompare(b.exerciseId));
-  if (!latest.length) return [];
-  const counts = await connection.select({ revisionId: exerciseItems.revisionId, count: sql<number>`count(*)::integer` })
-    .from(exerciseItems).where(inArray(exerciseItems.revisionId, latest.map((row) => row.id))).groupBy(exerciseItems.revisionId);
-  return latest.map((row) => ({ ...row, itemCount: counts.find((count) => count.revisionId === row.id)?.count ?? 0 }));
+  if (!rows.length) return [];
+  const itemRows = await connection.select({ revisionId: exerciseItems.revisionId, prompt: exerciseItems.publicPrompt })
+    .from(exerciseItems).where(inArray(exerciseItems.revisionId, rows.map((row) => row.id)));
+  const valid = rows.filter((row) => {
+    const content = contentSchemas.R1.safeParse(row.content);
+    const prompts = itemRows.filter((item) => item.revisionId === row.id).map((item) => promptSchemas.R1.safeParse(item.prompt));
+    if (!content.success || !prompts.length || prompts.some((prompt) => !prompt.success)) return false;
+    const gapIds = content.data.segments.filter((segment) => segment.kind === "gap").map((segment) => segment.gapId);
+    const promptIds = prompts.map((prompt) => prompt.success ? prompt.data.gapId : "");
+    return gapIds.length === promptIds.length && new Set(gapIds).size === gapIds.length && gapIds.every((gapId) => promptIds.includes(gapId));
+  });
+  const latest = [...new Map([...valid].reverse().map((row) => [row.exerciseId, row])).values()].sort((a, b) => a.exerciseId.localeCompare(b.exerciseId));
+  return latest.map((row) => ({ ...row, itemCount: itemRows.filter((item) => item.revisionId === row.id).length }));
 }
 
 export async function availability(groups: 1 | 2) {
