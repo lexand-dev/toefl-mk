@@ -1,0 +1,45 @@
+{
+  "name": "toefl-practice",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "beta:import": "tsx scripts/import-beta-drafts.ts",
+    "deadlines:recover": "tsx scripts/recover-deadlines.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "@tanstack/react-query": "^5.103.2",
+    "@trigger.dev/sdk": "^4.6.4",
+    "@vercel/blob": "^2.8.0",
+    "better-auth": "^1.4.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.9",
+    "next": "^16.0.0",
+    "pg": "^8.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "resend": "^6.14.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "drizzle-kit": "^0.31.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "overrides": {
+    "ws": "8.21.3"
+  }
+}

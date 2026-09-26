@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 Práctica R3 de extremo a extremo.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Las lecturas del historial se filtran por el propietario autenticado.
 - [ ] Repetir crea otro intento y conserva todos los anteriores.

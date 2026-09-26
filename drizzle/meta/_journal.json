@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790313656886,
+      "tag": "0000_friendly_the_hood",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790313883576,
+      "tag": "0001_stale_jimmy_woo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790327118823,
+      "tag": "0002_dashing_nico_minoru",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790328276584,
+      "tag": "0003_salty_abomination",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790329256663,
+      "tag": "0004_polite_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790383283561,
+      "tag": "0005_short_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790383557092,
+      "tag": "0006_wise_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790386544463,
+      "tag": "0007_familiar_johnny_storm",
+      "breakpoints": true
+    }
+  ]
+}

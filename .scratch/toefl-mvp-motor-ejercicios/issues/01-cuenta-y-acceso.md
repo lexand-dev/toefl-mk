@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] El registro público crea únicamente el rol `learner`; ningún campo cliente permite elevar permisos.
 - [ ] Verificación y recuperación usan correo transaccional; restablecer la contraseña revoca sesiones anteriores.

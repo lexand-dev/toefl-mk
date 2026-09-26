@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 Cuenta y acceso; 02 Publicación editorial.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [ ] Selección, resumen de materiales/ítems y reglas versionadas impiden duplicaciones silenciosas o cantidades incompatibles.
 - [ ] Inicio, posición, respuestas y tiempo de servidor sobreviven a recarga y reanudación.
